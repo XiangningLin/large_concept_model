@@ -6,7 +6,7 @@
 import torch
 from fairseq2.nn.padding import pad_seqs
 
-from lcm.datasets.lcm.batch import EmbeddingsBatch
+from lcm.datasets.batch import EmbeddingsBatch
 
 test_cases = [(0, 2), (2, 6), (0, 15), (3, 4), (1, 9)]
 

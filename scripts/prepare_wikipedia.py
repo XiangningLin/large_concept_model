@@ -42,7 +42,7 @@ def run(output_dir: Path):
         ],  # this is the column in the input dataset where we expect to find text to split
         model_name="sat-3l",
         verbose=True,
-        sentence_threshold=0.02,
+        sentence_threshold=0.2,  # sentence splitting threshold to tune based on the data (domain, language, etc.)
         max_sentence_len=256,
     )
     # setup SONAR, we are only going to deal with english
@@ -74,7 +74,7 @@ def run(output_dir: Path):
         output_dir,
         keep_same_partitioning=False,
         row_group_size=200,
-        batch_size=2000,
+        batch_size=200,
     )
 
     # requirements for our slurm jobs, if you are using a local cpu, you can ignore this

@@ -38,7 +38,7 @@ from stopes.utils.sharding.json_shards import JSONShardConfig
 from stopes.utils.sharding.parquet_shards import ParquetOutputConfig
 from wtpsplit import SaT, indices_to_sentences
 
-from lcm.datasets.sentence_splitter import remove_emojis
+from lcm.datasets.sentence_splitting import remove_emojis
 
 logger = logging.getLogger(__name__)
 

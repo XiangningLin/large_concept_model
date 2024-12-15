@@ -4,7 +4,7 @@
 #
 
 
-from lcm.datasets.sentence_splitter import (
+from lcm.datasets.sentence_splitting import (
     ResplitSentenceSplitter,
     deescape_special_chars,
     filter_empty_string,

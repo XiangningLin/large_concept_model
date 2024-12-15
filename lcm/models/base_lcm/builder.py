@@ -13,7 +13,7 @@ from fairseq2.nn.incremental_state import IncrementalStateBag
 from fairseq2.nn.transformer import AttentionMaskFactory, CausalAttentionMaskFactory
 from fairseq2.typing import DataType, Device
 
-from lcm.datasets.lcm import EmbeddingsBatch
+from lcm.datasets.batch import EmbeddingsBatch
 from lcm.models.abstract_lcm import (
     AbstractLCModel,
     AbstractLCModelBuilder,

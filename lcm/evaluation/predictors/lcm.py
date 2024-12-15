@@ -19,8 +19,8 @@ from sonar.inference_pipelines.text import (
 from stopes.core.utils import batch
 from stopes.pipelines.monolingual.utils.sentence_split import get_split_algo
 
+from lcm.datasets.batch import EmbeddingsBatch, get_embeddings_sequence
 from lcm.datasets.configs import SonarDecoderConfig, SonarEncoderConfig
-from lcm.datasets.lcm.batch import EmbeddingsBatch, get_embeddings_sequence
 from lcm.inference.lcm.generator import LCMGenerator, LCMGeneratorOptions
 from lcm.utils.card_utils import load_model_from_card
 from lcm.utils.common import Batched, torch_type

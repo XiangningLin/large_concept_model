@@ -14,7 +14,7 @@ from fairseq2.generation.generator import (
 )
 from fairseq2.logging import get_log_writer
 
-from lcm.datasets.lcm.batch import EmbeddingsBatch, PaddingMask
+from lcm.datasets.batch import EmbeddingsBatch, PaddingMask
 from lcm.inference.lcm.generator import (
     LCMGenerator,
     LCMGeneratorOptions,

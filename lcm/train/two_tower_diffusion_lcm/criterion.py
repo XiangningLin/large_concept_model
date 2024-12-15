@@ -12,7 +12,7 @@ from fairseq2.logging import get_log_writer
 from fairseq2.nn.padding import pad_seqs
 from torch import Tensor
 
-from lcm.datasets.lcm.batch import EmbeddingsBatch, LCMInput, LCMStyle
+from lcm.datasets.batch import EmbeddingsBatch, LCMInput, LCMStyle
 from lcm.models.two_tower_diffusion_lcm.builder import TwoTowerDiffusionLCModel
 from lcm.train.criterion import CriterionsFactory
 from lcm.train.lcm.criterion import (

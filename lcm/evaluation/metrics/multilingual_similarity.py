@@ -17,7 +17,7 @@ from fairseq2.typing import CPU, DataType, Device
 from rouge_score import rouge_scorer
 from tqdm.auto import trange
 
-from lcm.datasets.sentence_splitter import get_split_algo
+from lcm.datasets.sentence_splitting import get_split_algo
 from lcm.evaluation.api import Scorer
 
 logger = get_log_writer(__name__)

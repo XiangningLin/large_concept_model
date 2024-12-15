@@ -14,7 +14,7 @@ from fairseq2.nn.transformer import CausalAttentionMaskFactory
 from fairseq2.typing import DataType, Device
 from torch import Tensor
 
-from lcm.datasets.lcm import EmbeddingsBatch
+from lcm.datasets.batch import EmbeddingsBatch
 from lcm.models.abstract_lcm import (
     AbstractLCModel,
     AbstractLCModelBuilder,

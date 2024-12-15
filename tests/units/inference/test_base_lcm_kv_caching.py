@@ -6,7 +6,7 @@
 import pytest
 import torch
 
-from lcm.datasets.lcm.batch import EmbeddingsBatch
+from lcm.datasets.batch import EmbeddingsBatch
 from lcm.inference.lcm import LCMGenerator, LCMGeneratorOptions
 from lcm.models.base_lcm import BaseLCModelConfig, create_base_lcm_model
 from lcm.nn.transformer import TransformerConfig

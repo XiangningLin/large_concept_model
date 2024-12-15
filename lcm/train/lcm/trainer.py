@@ -21,8 +21,8 @@ from torch.nn import Module
 from torch.optim import Optimizer
 
 from lcm.datasets.configs import ParquetDatasetConfig
+from lcm.datasets.dataloader import LCMDataLoader
 from lcm.datasets.dataloading import ds_name
-from lcm.datasets.lcm import LCMDataLoader
 from lcm.models.abstract_lcm import AbstractLCModelConfig
 from lcm.models.base_lcm.loader import load_base_lcm_model
 from lcm.train.criterion import CriterionsFactory

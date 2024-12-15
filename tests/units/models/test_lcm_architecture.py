@@ -11,7 +11,7 @@ import math
 import pytest
 import torch
 
-from lcm.datasets.lcm import EmbeddingsBatch, LCMInput
+from lcm.datasets.batch import EmbeddingsBatch, LCMInput
 from lcm.models.base_lcm import (
     BaseLCModel,
     BaseLCModelConfig,

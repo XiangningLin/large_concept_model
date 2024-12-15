@@ -60,11 +60,12 @@ eval = [
   "spacy>=3.7.5",
   "textdescriptives>=2.8.2",
   "tiktoken>=0.8.0",
-  "transformers>=4.47.0",
+  "transformers>=4.45.0",
   "fairscale>=0.4.13",
 ]
 data = [
   "numpy>=1.21",
+  "numba>=0.60.0",
   "spacy>=3.7.5",
   "en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl",
   "sacremoses>=0.1.1",
@@ -72,6 +73,9 @@ data = [
   "scipy>=1.14",
   "editdistance>=0.8.1",
   "sacrebleu>=2.4.1",
+  "datasets>=2.18.0",
+  "wtpsplit>=2.1.0",
+  "transformers>=4.45.0",
 ]
 
 

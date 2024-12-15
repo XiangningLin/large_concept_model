@@ -17,7 +17,7 @@ from fairseq2.typing import CPU, DataType, Device
 from tqdm.auto import trange
 from transformers import XLNetTokenizer
 
-from lcm.datasets.sentence_splitter import ResplitSentenceSplitter
+from lcm.datasets.sentence_splitting import ResplitSentenceSplitter
 from lcm.evaluation.api import Scorer
 from lcm.evaluation.metrics.sentence_fluency import PerplexityScorer
 from lcm.evaluation.metrics.utils import (

@@ -11,7 +11,7 @@ import torch
 from fairseq2.logging import get_log_writer
 from torch import Tensor
 
-from lcm.datasets.lcm.batch import LCMInput, LCMStyle
+from lcm.datasets.batch import LCMInput, LCMStyle
 from lcm.models.abstract_lcm import AbstractLCModel
 from lcm.models.sonar_normalizer import SonarNormalizer
 from lcm.train.criterion import Criterion, CriterionConfig
@@ -139,5 +139,5 @@ class LCMCriterion(Criterion):
         """
         Computes the loss given an input batch.
         The model's forward pass is performed here
-        Input batch is LCMInput  (see `lcm.datasets.lcm.batch`):
+        Input batch is LCMInput  (see `lcm.datasets.batch`):
         """

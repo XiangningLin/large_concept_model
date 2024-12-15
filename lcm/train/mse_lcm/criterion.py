@@ -10,7 +10,7 @@ import torch
 from fairseq2.logging import get_log_writer
 from torch import Tensor
 
-from lcm.datasets.lcm.batch import EmbeddingsBatch, LCMInput, LCMStyle
+from lcm.datasets.batch import EmbeddingsBatch, LCMInput, LCMStyle
 from lcm.models.abstract_lcm import AbstractLCModel
 from lcm.train.criterion import CriterionsFactory
 from lcm.train.lcm.criterion import (
@@ -78,7 +78,7 @@ class ReconstructionCriterion(LCMCriterion):
     def __call__(self, batch: LCMInput) -> LossTerm:
         """
         Args:
-            batch is an LCMInput (see lcm.datasets.lcm.batch):
+            batch is an LCMInput (see lcm.datasets.batch):
 
         Returns a LossTerm
         """

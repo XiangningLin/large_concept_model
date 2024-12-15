@@ -12,7 +12,7 @@ from fairseq2.generation.generator import (
     SequenceGeneratorOutput,
 )
 
-from lcm.datasets.lcm.batch import EmbeddingsBatch
+from lcm.datasets.batch import EmbeddingsBatch
 from lcm.inference.lcm.generator import LCMGenerator, LCMGeneratorOptions
 from lcm.nn.incremental_state import LCMIncrementalStateBag
 

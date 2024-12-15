@@ -76,7 +76,7 @@ def patches(monkeypatch):
     monkeypatch.setattr("lcm.utils.logging.log_env_variables", lambda _: None)
     monkeypatch.setattr("lcm.train.trainer.log_env_variables", lambda _: None)
     monkeypatch.setattr("lcm.datasets.base.set_mkl_num_threads", lambda: None)
-    monkeypatch.setattr("lcm.datasets.lcm.dataloader.set_mkl_num_threads", lambda: None)
+    monkeypatch.setattr("lcm.datasets.dataloader.set_mkl_num_threads", lambda: None)
     monkeypatch.setattr("lcm.evaluation.utils.common.setup_env", lambda: None)
     monkeypatch.setattr("lcm.evaluation.run.setup_env", lambda: None)
 

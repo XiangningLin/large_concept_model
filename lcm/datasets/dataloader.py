@@ -21,6 +21,7 @@ from fairseq2.utils.state import Stateful
 from sonar.models.sonar_text import load_sonar_tokenizer
 
 from lcm.datasets.base import DataLoader
+from lcm.datasets.batch import LCMInput
 from lcm.datasets.configs import (
     ColumnsNames,
     DataLoadingConfig,
@@ -28,7 +29,6 @@ from lcm.datasets.configs import (
     ParquetDatasetLimitOptions,
     SonarDecoderConfig,
 )
-from lcm.datasets.lcm.batch import LCMInput
 from lcm.datasets.utils import move_eos_to_the_end
 from lcm.utils.common import set_mkl_num_threads
 
