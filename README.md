@@ -77,7 +77,7 @@ If [fairseq2](https://github.com/facebookresearch/fairseq2) does not provide a b
 The LCM can be trained and evaluated using textual data split in sentences and embeded with [SONAR](https://github.com/facebookresearch/SONAR/). We provide a sample processing pipeline that can be used to prepare such training data, you can run it with:
 
 ```
- uv run --extra data lcm/datasets/prepare_wikipedia.py /output/dir/for/the/data
+ uv run --extra data scripts/prepare_wikipedia.py /output/dir/for/the/data
  ```
 
  This pipeline shows how to get a dataset from huggingface and process it with SONAR and [SaT](https://arxiv.org/abs/2406.16678). Check out the file for more details on processing your own data. While the script provides an example pulling data from huggingface, we also provide [APIs](https://github.com/facebookresearch/stopes/tree/main/stopes/utils/sharding) to process jsonl, parquet and CSV.
