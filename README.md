@@ -74,7 +74,7 @@ If [fairseq2](https://github.com/facebookresearch/fairseq2) does not provide a b
 
 ### Preparing data
 
-The LCM can be trained and evaluated using textual data split in sentences and embeded with [SONAR](https://github.com/facebookresearch/SONAR/). We provide a sample processing pipeline that can be used to prepare such training data, you can run it with:
+The LCM can be trained and evaluated using textual data split in sentences and embedded with [SONAR](https://github.com/facebookresearch/SONAR/). We provide a sample processing pipeline that can be used to prepare such training data, you can run it with:
 
 ```
  uv run --extra data scripts/prepare_wikipedia.py /output/dir/for/the/data
