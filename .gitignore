@@ -110,3 +110,7 @@ logs/
 **/dask_jobqueue_logs
 core.*
 mortimer_env.txt
+
+# data
+*.parquet
+*.json
