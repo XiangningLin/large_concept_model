@@ -326,23 +326,20 @@ def run(
         batch_size=200,
     )
 
-    # requirements for our slurm jobs, if you are using a local cpu, you can ignore this
-    # if you are using slurm but no gpus, remove the gpus_per_node config
+    # requirements for Quest SLURM jobs
     req = Requirements(
-        mem_gb=128, gpus_per_node=1, cpus_per_task=10, timeout_min=3 * 24 * 60
+        mem_gb=128, gpus_per_node=0, cpus_per_task=16, timeout_min=2 * 24 * 60
     )
-    # launching config, here we use `local` to run locally, but you can switch it to `slurm` if you have a SLURM cluster.
+    # launching config for Quest HPC
     launcher = Launcher(
         cache=None,
-        cluster="local",
-        # for SLURM you can set some parameters of the launcher here
-        # cluster="slurm",
-        # update_parameters={
-        #    "account": "bfaq-delta-gpu",
-        #    "partition": "gpuA100x4",
-        #    "gres": "gpu:1",
-        #    "time": "48:00:00",
-        # },
+        cluster="slurm",
+        partition="gengpu",
+        account="p32721",
+        update_parameters={
+            "slurm_gres": "gpu:a100:1",
+            "srun_args": ["--gres=gpu:a100:1"],
+        },
     )
 
     # launch the shards processing

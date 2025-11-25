@@ -95,10 +95,53 @@ def get_fsdp_wrap_policy(
 
 
 def init_process_group(config: Any, logger: logging.Logger) -> Gang:
+    import torch
+    
+    # Debug: Print environment before submitit export
+    logger.info("=" * 80)
+    logger.info("DEBUG: init_process_group - BEFORE submitit export")
+    logger.info(f"  SLURM_JOB_ID: {os.environ.get('SLURM_JOB_ID', 'Not set')}")
+    logger.info(f"  SLURM_JOB_GPUS: {os.environ.get('SLURM_JOB_GPUS', 'Not set')}")
+    logger.info(f"  SLURM_GPUS_PER_NODE: {os.environ.get('SLURM_GPUS_PER_NODE', 'Not set')}")
+    logger.info(f"  SLURM_GRES: {os.environ.get('SLURM_GRES', 'Not set')}")
+    logger.info(f"  CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', 'Not set')}")
+    logger.info(f"  FAIRSEQ2_DEVICE: {os.environ.get('FAIRSEQ2_DEVICE', 'Not set')}")
+    logger.info(f"  LD_LIBRARY_PATH: {os.environ.get('LD_LIBRARY_PATH', 'Not set')[:200]}")
+    logger.info(f"  torch.cuda.is_available(): {torch.cuda.is_available()}")
+    logger.info(f"  torch.cuda.device_count(): {torch.cuda.device_count()}")
+    if torch.cuda.is_available():
+        try:
+            logger.info(f"  torch.cuda.current_device(): {torch.cuda.current_device()}")
+            logger.info(f"  torch.cuda.get_device_name(0): {torch.cuda.get_device_name(0)}")
+        except Exception as e:
+            logger.info(f"  Error getting CUDA device info: {e}")
+    else:
+        logger.warning("  torch.cuda.is_available() is False - checking why...")
+        try:
+            import torch._C
+            logger.info(f"  torch._C._cuda_getDeviceCount(): {torch._C._cuda_getDeviceCount()}")
+        except Exception as e:
+            logger.warning(f"  Cannot access torch._C._cuda_getDeviceCount(): {e}")
+    logger.info("=" * 80)
+    
     if getattr(config, "use_submitit", True):
         try:
             submitit.helpers.TorchDistributedEnvironment().export(overwrite=True)
             os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
+            
+            # Debug: Print environment after submitit export
+            logger.info("=" * 80)
+            logger.info("DEBUG: init_process_group - AFTER submitit export")
+            logger.info(f"  SLURM_JOB_ID: {os.environ.get('SLURM_JOB_ID', 'Not set')}")
+            logger.info(f"  SLURM_JOB_GPUS: {os.environ.get('SLURM_JOB_GPUS', 'Not set')}")
+            logger.info(f"  SLURM_GPUS_PER_NODE: {os.environ.get('SLURM_GPUS_PER_NODE', 'Not set')}")
+            logger.info(f"  SLURM_GRES: {os.environ.get('SLURM_GRES', 'Not set')}")
+            logger.info(f"  CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', 'Not set')}")
+            logger.info(f"  LOCAL_RANK: {os.environ.get('LOCAL_RANK', 'Not set')}")
+            logger.info(f"  FAIRSEQ2_DEVICE: {os.environ.get('FAIRSEQ2_DEVICE', 'Not set')}")
+            logger.info(f"  torch.cuda.is_available(): {torch.cuda.is_available()}")
+            logger.info(f"  torch.cuda.device_count(): {torch.cuda.device_count()}")
+            logger.info("=" * 80)
 
         except RuntimeError:
             warnings.warn(
@@ -107,12 +150,29 @@ def init_process_group(config: Any, logger: logging.Logger) -> Gang:
                 stacklevel=2,
             )
 
+    # Debug: Print before calling ProcessGroupGang.init_default_process_group
+    logger.info("=" * 80)
+    logger.info("DEBUG: init_process_group - BEFORE ProcessGroupGang.init_default_process_group")
+    logger.info(f"  FAIRSEQ2_DEVICE: {os.environ.get('FAIRSEQ2_DEVICE', 'Not set')}")
+    logger.info(f"  torch.cuda.is_available(): {torch.cuda.is_available()}")
+    logger.info(f"  torch.cuda.device_count(): {torch.cuda.device_count()}")
+    logger.info("=" * 80)
+
     timeout = timedelta(minutes=15)
 
     gang = ProcessGroupGang.init_default_process_group(
         ok_initialized=False,
         timeout=timeout,
     )
+    
+    # Debug: Print after ProcessGroupGang.init_default_process_group
+    logger.info("=" * 80)
+    logger.info("DEBUG: init_process_group - AFTER ProcessGroupGang.init_default_process_group")
+    logger.info(f"  gang.device: {gang.device}")
+    logger.info(f"  gang.rank: {gang.rank}")
+    logger.info(f"  gang.size: {gang.size}")
+    logger.info("=" * 80)
+    
     logger.info(f"Initialized gang with default process group (timeout={timeout})")
 
     return gang

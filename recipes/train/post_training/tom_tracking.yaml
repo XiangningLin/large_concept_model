@@ -1,0 +1,111 @@
+# @package trainer
+# Tom Tracking Dataset Finetuning Configuration
+
+_trainer_: lcm.train.lcm.trainer.prepare_lcm_trainer
+
+# ============================================================================
+# Resource Requirements
+# ============================================================================
+requirements:
+  nodes: 1
+  tasks_per_node: 1  # 单卡配置，改为 2 可以双卡
+  gpus_per_node: 0   # 设为 0，使用 gres 参数指定 GPU 资源
+  cpus_per_task: 16
+  mem_gb: 0
+  timeout_min: 2820  # 47 小时，在 Quest HPC gengpu 分区的 48 小时限制内
+
+# ============================================================================
+# Model Configuration
+# ============================================================================
+# 从零开始训练，使用370M架构（与SSM参数量一致）
+model_arch: base_lcm_370M
+
+# ============================================================================
+# Training Criterion
+# ============================================================================
+criterion:
+  name: target_mse
+  reduction: sum
+  compute_rmse: False
+
+# ============================================================================
+# Output and Logging
+# ============================================================================
+output_dir: ??  # 必须在命令行指定
+dtype: "torch.float16"
+use_optimizer_in_fp32: true
+
+# ============================================================================
+# WandB Configuration
+# ============================================================================
+wandb_project: "lcm_tom_tracking"
+wandb_run_name: null  # 将使用 experiment_name 作为 run name
+wandb_entity: null
+
+# ============================================================================
+# Distributed Training (FSDP)
+# ============================================================================
+use_fsdp: true
+fsdp_fp32_reduce: true
+fsdp_wrap_granularity: "model"
+fsdp_memory_policy: "standard"
+
+# ============================================================================
+# Optimizer Configuration
+# ============================================================================
+lr_schedule: cosine
+start_lr: 1e-6
+final_lr: 1e-6
+lr: 0.00001  # 更小的学习率，因为数据量小
+num_lr_warmup_steps: 100  # 更少的 warmup steps
+max_grad_norm: 25
+weight_decay: 0.01
+
+# ============================================================================
+# Training Schedule (适配小数据集)
+# ============================================================================
+max_steps: 2000  # 200 samples * 20 epochs ≈ 2000 steps (假设 batch=2)
+gradient_accumulation: 1
+
+# Validation & Checkpointing
+validate_every_n_steps: 200  # 更频繁验证
+checkpoint_every_n_steps: 200
+save_model_every_n_steps: 400
+keep_last_n_checkpoints: 5  # 保留更多 checkpoints 用于分析
+publish_metrics_every_n_steps: 50  # 更频繁记录指标
+preserve_consolidated_models: true
+
+# ============================================================================
+# Other Settings
+# ============================================================================
+seed: 42
+profile: false
+turn_off_grad_normalization: false
+
+# ============================================================================
+# Data Loading Configuration
+# ============================================================================
+data_loading_config:
+  max_tokens: 2000  # 更小的 batch size（因为数据少）
+  nb_epochs: 20     # 更多 epochs（因为数据少）
+  min_length_of_sequences: 1
+  order_by_length: true
+  nb_prefetch: 2
+  num_parallel_calls: 2
+
+# ============================================================================
+# Training Data
+# ============================================================================
+training_data:
+  - name: "tom_tracking_data=train"
+    source_suffix_text: ""  # Tom Tracking 不需要特殊 suffix
+    target_suffix_text: ""
+
+# ============================================================================
+# Validation Data
+# ============================================================================
+validation_data:
+  - name: "tom_tracking_data=validation"
+    source_suffix_text: ""
+    target_suffix_text: ""
+
