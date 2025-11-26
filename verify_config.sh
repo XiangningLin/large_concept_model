@@ -1,15 +1,15 @@
 #!/bin/bash
-# 验证 jianwen-dev 分支的完整流程 (2 GPU 版本 - 修复版)
 set -e
 
 # ========================================================
 # 配置 & 环境变量
 # ========================================================
-export PROJECT_ROOT="/u/xlin5/projects/large_concept_model"
-export DATA_OUTPUT_DIR="processed_data/tom_tracking_test"
-export CACHE_DIR="./preprocessed_data"
-export CHECKPOINT_DIR="checkpoints/tom_tracking_test_2gpu"
-export EXPERIMENT_NAME="tom_tracking_test_2gpu"
+# 注意：使用 /work/nvme/bfaq/xlin5/ 路径，该存储空间较大
+export PROJECT_ROOT="/work/nvme/bfaq/xlin5/large_concept_model"
+export DATA_OUTPUT_DIR="/work/nvme/bfaq/xlin5/large_concept_model/processed_data/tom_tracking_test"
+export CACHE_DIR="/work/nvme/bfaq/xlin5/large_concept_model/preprocessed_data"
+export CHECKPOINT_DIR="/work/nvme/bfaq/xlin5/large_concept_model/checkpoints/tom_tracking_780M_2gpu"
+export EXPERIMENT_NAME="tom_tracking_780M_2gpu"
 # ========================================================
 
 cd "$PROJECT_ROOT"
@@ -57,10 +57,11 @@ echo "=========================================="
 # 创建日志目录
 mkdir -p logs checkpoints
 
-echo "使用 2 GPU 训练..."
+echo "使用 2 GPU 训练 780M 模型..."
 CUDA_VISIBLE_DEVICES=0,1 .venv/bin/torchrun --standalone --nnodes=1 --nproc-per-node=2 \
     -m lcm.train launcher=standalone \
     +post_training=tom_tracking_4GPU \
+    ++trainer.model_arch=base_lcm_780M \
     ++trainer.output_dir="$CHECKPOINT_DIR" \
     ++trainer.experiment_name="$EXPERIMENT_NAME" \
     +trainer.use_submitit=false \

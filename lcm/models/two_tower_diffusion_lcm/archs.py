@@ -24,6 +24,50 @@ def toy_lcm() -> TwoTowerDiffusionLCModelConfig:
     )
 
 
+@lcm_arch("two_tower_diffusion_lcm_780M")
+def two_tower_diffusion_lcm_780M() -> TwoTowerDiffusionLCModelConfig:
+    """3-layer encoder / 7-layer denoiser / model dim 2048
+    Parameter Size: ~780M (approximately half of 1.6B)"""
+    model_dim: int = 2048
+    num_attn_heads: int = 16
+    return TwoTowerDiffusionLCModelConfig(
+        model_dim=model_dim,
+        max_seq_len=4096,
+        frontend=EncoderFrontendConfig(),
+        context_encoder=TransformerConfig(
+            num_layers=3,  # Reduced from 5
+            ffn_inner_dim=4 * model_dim,
+            num_attn_heads=num_attn_heads,
+            final_dropout_p=0.0,
+            attention_dropout_p=0.0,
+            dropout_p=0.1,
+            mha_output_proj_bias=True,
+            use_swiglu=True,
+            layer_normalization_style="rms",
+            pos_embedding_style="rope",
+        ),
+        denoiser=DenoiserConfig(
+            num_layers=7,  # Reduced from 13
+            timestep_embed_dim=model_dim,
+            ffn_inner_dim=4 * model_dim,
+            pos_embedding_style="none",
+            num_attn_heads=num_attn_heads,
+            final_dropout_p=0.0,
+            attention_dropout_p=0.0,
+            dropout_p=0.1,
+            mha_output_proj_bias=True,
+            use_swiglu=True,
+            layer_normalization_style="rms",
+            pre_denoiser=ProjectionConfig(),
+            post_denoiser=ProjectionConfig(),
+        ),
+        # TODO change normalizer name to align with the normalizer instructions
+        sonar_normalizer_name="dummy_sonar_normalizer",
+        trained_with_cf_guidance=True,
+        noise_scheduler=DDIMSchedulerConfig(num_diffusion_train_steps=100),
+    )
+
+
 @lcm_arch("two_tower_diffusion_lcm_1_6B")
 def two_tower_diffusion_lcm_1_6B() -> TwoTowerDiffusionLCModelConfig:
     """5-layer encodder / 13-layer denoiser / model dim 2048
