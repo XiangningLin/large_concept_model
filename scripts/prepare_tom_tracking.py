@@ -328,18 +328,12 @@ def run(
 
     # requirements for Quest SLURM jobs
     req = Requirements(
-        mem_gb=128, gpus_per_node=0, cpus_per_task=16, timeout_min=2 * 24 * 60
+        mem_gb=128, gpus_per_node=1, cpus_per_task=16, timeout_min=2 * 24 * 60
     )
-    # launching config for Quest HPC
+    # launching config - use local/debug mode instead of SLURM
     launcher = Launcher(
         cache=None,
-        cluster="slurm",
-        partition="gengpu",
-        account="p32721",
-        update_parameters={
-            "slurm_gres": "gpu:a100:1",
-            "srun_args": ["--gres=gpu:a100:1"],
-        },
+        cluster="debug",  # Changed from "slurm" to "debug" for local execution
     )
 
     # launch the shards processing

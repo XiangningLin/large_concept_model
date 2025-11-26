@@ -21,7 +21,7 @@ target_text_column: text_sentences
 name: "tom_tracking_data"
 parquet_path:
   # Updated to point to the processed data with split column and natural language conversion
-  local: "/projects/p32721/large_concept_model/processed_data/tom_tracking"
+  local: "/u/xlin5/projects/large_concept_model/processed_data/tom_tracking_test"
   # s3: "tom_tracking_processed"
 source_column: "input_prompt_sentences_sonar_emb"
 source_text_column: "input_prompt_sentences"
