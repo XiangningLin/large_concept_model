@@ -37,16 +37,28 @@ else
 fi
 echo ""
 
-# 步骤3: 克隆仓库（如果还没有）
+# 步骤3: 准备项目目录
 echo "3️⃣ 准备项目目录..."
-cd "$WORKSPACE"
-if [ ! -d "large_concept_model" ]; then
-    echo "克隆仓库..."
-    git clone https://github.com/facebookresearch/large_concept_model.git
+# 检查是否已经在项目根目录（有 pyproject.toml 或 .venv）
+if [ -f "pyproject.toml" ] || [ -d ".venv" ]; then
+    echo "✓ 已在项目根目录: $(pwd)"
+    PROJECT_DIR="$(pwd)"
+else
+    # 否则，假设 WORKSPACE 是父目录
+    cd "$WORKSPACE"
+    if [ ! -d "large_concept_model" ]; then
+        echo "克隆仓库..."
+        git clone https://github.com/facebookresearch/large_concept_model.git
+    fi
+    cd large_concept_model
+    PROJECT_DIR="$(pwd)"
 fi
-cd large_concept_model
-echo "✓ 项目目录: $(pwd)"
+cd "$PROJECT_DIR"
+echo "✓ 项目目录: $PROJECT_DIR"
 echo ""
+
+# 取消 VIRTUAL_ENV 环境变量，避免路径冲突
+unset VIRTUAL_ENV
 
 # 步骤4: 创建虚拟环境
 echo "4️⃣ 创建Python虚拟环境（预计5-10分钟）..."
@@ -54,16 +66,42 @@ if [ ! -d ".venv" ]; then
     uv sync --python 3.10 --extra cpu --extra eval --extra data
     echo "✓ 虚拟环境已创建"
 else
-    echo "✓ 虚拟环境已存在"
+    echo "⚠️  .venv 已存在"
+    read -p "是否删除并重新创建虚拟环境？(yes/no，默认no): " reinstall
+    if [ "$reinstall" = "yes" ]; then
+        echo "删除旧的虚拟环境..."
+        rm -rf .venv
+        unset VIRTUAL_ENV  # 再次确保取消
+        uv sync --python 3.10 --extra cpu --extra eval --extra data
+        echo "✓ 虚拟环境已重新创建"
+    else
+        echo "✓ 使用现有虚拟环境"
+    fi
 fi
 echo ""
 
-# 步骤5: 安装PyTorch
-echo "5️⃣ 安装PyTorch..."
-.venv/bin/python -c "import torch; print(f'当前PyTorch: {torch.__version__}')" 2>/dev/null || {
-    echo "正在安装PyTorch..."
-    uv pip install --python .venv/bin/python torch==2.5.1 \
-        --extra-index-url https://download.pytorch.org/whl/$CUDA_VERSION --upgrade
+# 步骤5: 安装PyTorch (GPU版本)
+echo "5️⃣ 安装PyTorch (GPU版本)..."
+# 检查当前 PyTorch 版本
+CURRENT_TORCH=$(.venv/bin/python -c "import torch; print(torch.__version__)" 2>/dev/null || echo "")
+if [ -n "$CURRENT_TORCH" ]; then
+    echo "当前PyTorch版本: $CURRENT_TORCH"
+    # 检查是否是 CPU 版本
+    if echo "$CURRENT_TORCH" | grep -q "+cpu"; then
+        echo "检测到 CPU 版本，需要安装 GPU 版本..."
+        echo "卸载 CPU 版本的 PyTorch..."
+        uv pip uninstall --python .venv/bin/python torch torchvision torchaudio -y 2>/dev/null || true
+    fi
+fi
+
+# 安装 GPU 版本的 PyTorch
+echo "正在安装 PyTorch 2.5.1 (CUDA $CUDA_VERSION)..."
+uv pip install --python .venv/bin/python torch==2.5.1 \
+    --extra-index-url https://download.pytorch.org/whl/$CUDA_VERSION --upgrade
+
+# 验证安装
+.venv/bin/python -c "import torch; print(f'✓ PyTorch: {torch.__version__}'); print(f'✓ CUDA available: {torch.cuda.is_available()}')" || {
+    echo "⚠️  PyTorch 安装可能有问题"
 }
 echo "✓ PyTorch已安装"
 echo ""
@@ -88,34 +126,87 @@ else
     
     # 检查 conda 是否可用
     if command -v conda &> /dev/null; then
-        # 创建临时 conda 环境
         CONDA_ENV_NAME="lcm-helper"
         
+        # 创建 conda 环境（如果不存在）
         if ! conda env list | grep -q "^${CONDA_ENV_NAME} "; then
             echo "创建 conda 环境: $CONDA_ENV_NAME"
             conda create -n $CONDA_ENV_NAME -y
+        else
+            echo "✓ conda 环境 $CONDA_ENV_NAME 已存在"
         fi
         
+        # 安装 libsndfile
         echo "安装 libsndfile..."
         conda install -n $CONDA_ENV_NAME -c conda-forge libsndfile==1.0.31 -y
         
-        # 获取 conda 环境路径
-        CONDA_LIB_PATH=$(conda info --envs | grep "^${CONDA_ENV_NAME} " | awk '{print $NF}')/lib
+        # 获取 conda 环境路径（多种方法尝试）
+        CONDA_LIB_PATH=""
         
-        # 复制库文件到 .venv/lib
-        echo "复制音频库到 .venv/lib..."
-        cp -L ${CONDA_LIB_PATH}/libsndfile.so* .venv/lib/ 2>/dev/null || true
-        cp -L ${CONDA_LIB_PATH}/libFLAC.so* .venv/lib/ 2>/dev/null || true
-        cp -L ${CONDA_LIB_PATH}/libvorbis*.so* .venv/lib/ 2>/dev/null || true
-        cp -L ${CONDA_LIB_PATH}/libopus.so* .venv/lib/ 2>/dev/null || true
+        # 方法1: 使用 conda info --envs（处理不同的输出格式）
+        CONDA_ENV_PATH=$(conda info --envs 2>/dev/null | grep -E "^${CONDA_ENV_NAME}[[:space:]]" | awk '{print $NF}' | head -1)
+        # 如果上面没找到，尝试另一种格式（可能路径在第二列）
+        if [ -z "$CONDA_ENV_PATH" ]; then
+            CONDA_ENV_PATH=$(conda info --envs 2>/dev/null | grep "${CONDA_ENV_NAME}" | grep -v "^#" | awk '{for(i=2;i<=NF;i++) if($i ~ /^\//) print $i}' | head -1)
+        fi
+        if [ -n "$CONDA_ENV_PATH" ] && [ -d "${CONDA_ENV_PATH}/lib" ]; then
+            CONDA_LIB_PATH="${CONDA_ENV_PATH}/lib"
+            echo "✓ 从 conda info 获取路径: $CONDA_LIB_PATH"
+        fi
         
-        echo "✓ 音频库已安装"
+        # 方法2: 如果方法1失败，尝试常见路径
+        if [ -z "$CONDA_LIB_PATH" ] || [ ! -d "$CONDA_LIB_PATH" ]; then
+            USERNAME=$(whoami)
+            echo "尝试常见 conda 路径..."
+            for conda_base in \
+                "/u/${USERNAME}/miniconda3/envs" \
+                "/u/${USERNAME}/miniconda/envs" \
+                "$HOME/miniconda3/envs" \
+                "$HOME/miniconda/envs" \
+                "/u/${USERNAME}/anaconda3/envs" \
+                "$HOME/anaconda3/envs"; do
+                if [ -d "${conda_base}/${CONDA_ENV_NAME}/lib" ]; then
+                    CONDA_LIB_PATH="${conda_base}/${CONDA_ENV_NAME}/lib"
+                    echo "✓ 找到 conda 路径: $CONDA_LIB_PATH"
+                    break
+                fi
+            done
+        fi
+        
+        # 方法3: 如果还是找不到，尝试从 CONDA_PREFIX 获取（如果激活了环境）
+        if [ -z "$CONDA_LIB_PATH" ] || [ ! -d "$CONDA_LIB_PATH" ]; then
+            if [ -n "$CONDA_PREFIX" ] && [ -d "${CONDA_PREFIX}/lib" ]; then
+                CONDA_LIB_PATH="${CONDA_PREFIX}/lib"
+                echo "✓ 从 CONDA_PREFIX 获取路径: $CONDA_LIB_PATH"
+            fi
+        fi
+        
+        if [ -d "$CONDA_LIB_PATH" ]; then
+            # 复制库文件到 .venv/lib
+            echo "复制音频库到 .venv/lib..."
+            cp -L ${CONDA_LIB_PATH}/libsndfile.so* .venv/lib/ 2>/dev/null || true
+            cp -L ${CONDA_LIB_PATH}/libFLAC.so* .venv/lib/ 2>/dev/null || true
+            cp -L ${CONDA_LIB_PATH}/libvorbis*.so* .venv/lib/ 2>/dev/null || true
+            cp -L ${CONDA_LIB_PATH}/libopus.so* .venv/lib/ 2>/dev/null || true
+            
+            # 验证是否复制成功
+            if [ -f ".venv/lib/libsndfile.so" ]; then
+                echo "✓ 音频库已安装并复制到 .venv/lib/"
+            else
+                echo "⚠️  复制可能失败，请手动检查"
+            fi
+        else
+            echo "⚠️  无法找到 conda 环境路径，请手动复制："
+            echo "   cp -L \$CONDA_PREFIX/lib/{libsndfile.so*,libFLAC.so*,libvorbis*.so*,libopus.so*} .venv/lib/"
+        fi
     else
         echo "⚠️  conda 未找到，请手动安装音频库："
         echo "   1. conda create -n lcm-helper"
-        echo "   2. conda activate lcm-helper"
-        echo "   3. conda install -c conda-forge libsndfile==1.0.31"
-        echo "   4. cp -L \$CONDA_PREFIX/lib/{libsndfile.so*,libFLAC.so*,libvorbis*.so*,libopus.so*} .venv/lib/"
+        echo "   2. conda install -n lcm-helper -c conda-forge libsndfile==1.0.31"
+        echo "   3. cp -L /u/\$(whoami)/miniconda3/envs/lcm-helper/lib/libsndfile.so* .venv/lib/"
+        echo "   4. cp -L /u/\$(whoami)/miniconda3/envs/lcm-helper/lib/libFLAC.so* .venv/lib/"
+        echo "   5. cp -L /u/\$(whoami)/miniconda3/envs/lcm-helper/lib/libvorbis*.so* .venv/lib/"
+        echo "   6. cp -L /u/\$(whoami)/miniconda3/envs/lcm-helper/lib/libopus.so* .venv/lib/"
     fi
 fi
 echo ""
