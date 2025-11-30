@@ -3,13 +3,65 @@
 #
 
 import os
+import sys
+from pathlib import Path
 
 # Set LD_LIBRARY_PATH to include conda environment's libsndfile before importing any modules
 # that depend on it (e.g., fairseq2n)
-_venv_lib = "/projects/bfaq/jlyu3/large_concept_model/.venv/lib"
-_conda_lib = "/u/jlyu3/miniconda3/envs/lcm-helper/lib"
+# Dynamically detect paths based on current environment
 _current_ld_path = os.environ.get("LD_LIBRARY_PATH", "")
-os.environ["LD_LIBRARY_PATH"] = f"{_venv_lib}:{_conda_lib}:{_current_ld_path}"
+
+# Detect venv lib path (assumes script is run from project root or venv is at .venv)
+_script_dir = Path(__file__).parent.parent
+_venv_lib = _script_dir / ".venv" / "lib"
+if not _venv_lib.exists():
+    # Fallback: try to get from sys.executable
+    _python_path = Path(sys.executable)
+    if ".venv" in str(_python_path) or "venv" in str(_python_path):
+        _venv_lib = _python_path.parent.parent / "lib"
+
+# Detect conda lib path
+_conda_lib = None
+if "CONDA_PREFIX" in os.environ:
+    _conda_lib = Path(os.environ["CONDA_PREFIX"]) / "lib"
+else:
+    # Try common conda locations for lcm-helper environment
+    _env_name = os.environ.get("CONDA_DEFAULT_ENV", "lcm-helper")
+    _username = os.environ.get("USER", os.environ.get("LOGNAME", Path.home().name))
+    for _conda_base in [
+        Path.home() / "miniconda3" / "envs",
+        Path.home() / "miniconda" / "envs",
+        Path("/u") / _username / "miniconda3" / "envs",
+        Path("/u") / _username / "miniconda" / "envs",
+    ]:
+        _potential = _conda_base / _env_name / "lib"
+        if _potential.exists() and (_potential / "libsndfile.so").exists():
+            _conda_lib = _potential
+            break
+    # If not found with env name, try just lcm-helper
+    if _conda_lib is None and _env_name != "lcm-helper":
+        for _conda_base in [
+            Path.home() / "miniconda3" / "envs",
+            Path.home() / "miniconda" / "envs",
+            Path("/u") / _username / "miniconda3" / "envs",
+            Path("/u") / _username / "miniconda" / "envs",
+        ]:
+            _potential = _conda_base / "lcm-helper" / "lib"
+            if _potential.exists() and (_potential / "libsndfile.so").exists():
+                _conda_lib = _potential
+                break
+
+# Build LD_LIBRARY_PATH with only existing paths
+_ld_paths = []
+if _venv_lib.exists():
+    _ld_paths.append(str(_venv_lib))
+if _conda_lib and _conda_lib.exists():
+    _ld_paths.append(str(_conda_lib))
+if _current_ld_path:
+    _ld_paths.append(_current_ld_path)
+
+if _ld_paths:
+    os.environ["LD_LIBRARY_PATH"] = ":".join(_ld_paths)
 
 import asyncio
 import re
