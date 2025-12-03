@@ -3,11 +3,14 @@
 # 使用方法: bash pretrain.sh --num_gpus=2
 
 set -e
-cd /work/nvme/bfaq/xlin5/large_concept_model
+# cd /work/nvme/bfaq/xlin5/large_concept_model
+
+cd /projects/p32721/large_concept_model
 
 # 默认参数
 NUM_GPUS=2
-DATA_DIR="output/c4_10b"
+# DATA_DIR="output/c4_10b"
+DATA_DIR="output/fine_web"
 OUTPUT_DIR="checkpoints/mse_lcm_780m"
 EXPERIMENT_NAME="mse_lcm_780m_10b"
 MAX_TOKENS=6000
@@ -76,28 +79,35 @@ echo "✓ 数据目录存在"
 echo ""
 
 # 设置环境变量
-export UV_CACHE_DIR=/work/nvme/bfaq/xlin5/uv_cache
-export TMPDIR=/work/nvme/bfaq/xlin5/tmp
+# export UV_CACHE_DIR=/work/nvme/bfaq/xlin5/uv_cache
+# export TMPDIR=/work/nvme/bfaq/xlin5/tmp
+
+export UV_CACHE_DIR=/projects/p32721/large_concept_model/uv_cache
+export TMPDIR=/projects/p32721/large_concept_model/tmp
+
 mkdir -p $TMPDIR $OUTPUT_DIR
 
 # 启动训练
 echo "🚀 启动训练..."
 echo ""
-
+# TODO: added
 CUDA_VISIBLE_DEVICES=$GPU_LIST .venv/bin/python -m torch.distributed.run \
     --standalone \
     --nnodes=1 \
     --nproc-per-node=$NUM_GPUS \
     -m lcm.train \
     launcher=standalone \
-    +pretrain=mse_780m \
+    +pretrain=mse_780M \
     ++trainer.output_dir=$OUTPUT_DIR \
     ++trainer.experiment_name=$EXPERIMENT_NAME \
     ++trainer.data_loading_config.max_tokens=$MAX_TOKENS \
     ++trainer.use_fsdp=true \
     ++trainer.max_steps=$MAX_STEPS \
     ++trainer.checkpoint_every_n_steps=$CHECKPOINT_EVERY \
+    ++trainer.save_model_every_n_steps=$CHECKPOINT_EVERY \
     ++trainer.publish_metrics_every_n_steps=100
+
+# TODO: pdb是submitit在用--debug模式运行指令时自带的。
 
 echo ""
 echo "✅ 训练已启动！"

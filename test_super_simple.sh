@@ -2,18 +2,26 @@
 # 超简化测试 - 10条数据，确保能跑通
 set -e
 
-cd /work/nvme/bfaq/xlin5/large_concept_model
+# cd /work/nvme/bfaq/xlin5/large_concept_model
+cd /projects/p32721/large_concept_model
 
 echo "🧪 超简化测试（10条数据）"
 echo "======================================"
 echo "这是最简单的测试，如果这个都不work，说明环境有问题"
+echo "注意查看是否具备SSL证书"
 echo ""
 
 # 设置环境变量
-export UV_CACHE_DIR=/work/nvme/bfaq/xlin5/uv_cache
-export HF_HOME=/work/nvme/bfaq/xlin5/hf_cache
-export HF_DATASETS_CACHE=/work/nvme/bfaq/xlin5/hf_cache/datasets
-export TMPDIR=/work/nvme/bfaq/xlin5/tmp
+# export UV_CACHE_DIR=/work/nvme/bfaq/xlin5/uv_cache
+# export HF_HOME=/work/nvme/bfaq/xlin5/hf_cache
+# export HF_DATASETS_CACHE=/work/nvme/bfaq/xlin5/hf_cache/datasets
+# export TMPDIR=/work/nvme/bfaq/xlin5/tmp
+
+export UV_CACHE_DIR=/projects/p32721/large_concept_model/uv_cache  
+export HF_HOME=/projects/p32721/large_concept_model/hf_cache
+export HF_DATASETS_CACHE=/projects/p32721/large_concept_model/hf_cache/datasets
+export TMPDIR=/projects/p32721/large_concept_model/tmp
+
 mkdir -p $TMPDIR logs output/test_10
 
 echo "步骤1: 测试Python环境..."

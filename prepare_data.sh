@@ -3,12 +3,12 @@
 # 使用方法: bash prepare_data.sh --num_gpus=8 --num_samples=2000000
 
 set -e
-cd /work/nvme/bfaq/xlin5/large_concept_model
+# cd /work/nvme/bfaq/xlin5/large_concept_model
 
 # 默认参数
 NUM_GPUS=2
-NUM_SAMPLES=2000000  # 约10B tokens
-OUTPUT_DIR="output/c4_10b"
+NUM_SAMPLES=20000  # 约10B tokens
+OUTPUT_DIR="output/fine_web"
 BATCH_SIZE=20
 
 # 解析命令行参数
@@ -53,10 +53,16 @@ echo "======================================"
 echo ""
 
 # 设置环境变量
-export UV_CACHE_DIR=/work/nvme/bfaq/xlin5/uv_cache
-export HF_HOME=/work/nvme/bfaq/xlin5/hf_cache
-export HF_DATASETS_CACHE=/work/nvme/bfaq/xlin5/hf_cache/datasets
-export TMPDIR=/work/nvme/bfaq/xlin5/tmp
+# export UV_CACHE_DIR=/work/nvme/bfaq/xlin5/uv_cache
+# export HF_HOME=/work/nvme/bfaq/xlin5/hf_cache
+# export HF_DATASETS_CACHE=/work/nvme/bfaq/xlin5/hf_cache/datasets
+# export TMPDIR=/work/nvme/bfaq/xlin5/tmp
+
+export UV_CACHE_DIR=/projects/p32721/large_concept_model/uv_cache
+export HF_HOME=/projects/p32721/large_concept_model/hf_cache
+export HF_DATASETS_CACHE=/projects/p32721/large_concept_model/hf_cache/datasets
+export TMPDIR=/projects/p32721/large_concept_model/tmp
+
 mkdir -p $TMPDIR logs $OUTPUT_DIR
 
 # 启动所有GPU任务
@@ -66,7 +72,15 @@ for i in $(seq 0 $((NUM_GPUS - 1))); do
     
     echo "  GPU $i: 样本 $START_IDX - $((START_IDX + SAMPLES_PER_GPU))"
     
-    CUDA_VISIBLE_DEVICES=$i nohup .venv/bin/python scripts/prepare_c4.py \
+    # CUDA_VISIBLE_DEVICES=$i nohup .venv/bin/python scripts/prepare_c4.py \
+    #     --output_dir=$OUTPUT_DIR/shard_$i \
+    #     --num_samples=$SAMPLES_PER_GPU \
+    #     --start_index=$START_IDX \
+    #     --batch_size=$BATCH_SIZE \
+    #     > logs/prepare_gpu${i}.log 2>&1 &
+    
+    # TODO: added -u to force flush output
+    CUDA_VISIBLE_DEVICES=$i nohup .venv/bin/python -u scripts/prepare_fine_web.py \
         --output_dir=$OUTPUT_DIR/shard_$i \
         --num_samples=$SAMPLES_PER_GPU \
         --start_index=$START_IDX \

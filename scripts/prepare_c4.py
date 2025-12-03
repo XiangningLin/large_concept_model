@@ -7,8 +7,8 @@ Streaming C4 Data Preparation Script
 """
 
 import os
-os.environ["HF_HOME"] = "/work/nvme/bfaq/xlin5/hf_cache"
-os.environ["HF_DATASETS_CACHE"] = "/work/nvme/bfaq/xlin5/hf_cache/datasets"
+os.environ["HF_HOME"] = "/projects/p32721/large_concept_model/hf_cache"
+os.environ["HF_DATASETS_CACHE"] = "/projects/p32721/large_concept_model/hf_cache/datasets"
 
 from pathlib import Path
 import torch

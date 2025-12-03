@@ -1,6 +1,7 @@
 name: "pretraining_data"
 parquet_path:
-  s3: "output/c4_100_stream"
+  # s3: "output/c4_100_stream"
+  s3: "output/fine_web"
 source_column: "text_sentences_sonar_emb"
 source_text_column: "text_sentences"
 ---
