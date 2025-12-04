@@ -114,3 +114,6 @@ mortimer_env.txt
 # data
 *.parquet
 *.json
+
+# temporary files
+tmp/

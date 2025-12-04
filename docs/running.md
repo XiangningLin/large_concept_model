@@ -5,19 +5,19 @@
 
 首先我们要拉取Xiangning的分支作为origin。
 
-```bash
+```sh
 git remote add origin git@github.com:XiangningLin/large_concept_model.git
 ```
 
 为验证是否成功添加了新的origin，可以运行：
 
-```bash
+```sh
 git remote -v
 ```
 
 成功拉取远端repo之后，就可以再通过`git fetch`将代码拉取到本地。在那之后我们要做的是配置环境：
 
-```bash
+```sh
 cd large_concept_model
 bash INSTALL_NEW_MACHINE.sh
 ```
@@ -26,7 +26,7 @@ bash INSTALL_NEW_MACHINE.sh
 
 ## Step 1：数据预处理
 
-```bash
+```sh
 bash prepare_data.sh
 ```
 
@@ -35,3 +35,7 @@ bash prepare_data.sh
 __TODO：__
 - enable hydra风格的prepare_data和pretrain的bash命令。
 - 或者，enable fire风格的prepare_data和pretrain的bash命令。
+
+# 需要改动的文件
+
+LCM的代码需要我们在某些步骤之间手动在某些配置文件之中修改或添加一些配置项。

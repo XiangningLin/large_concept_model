@@ -16,6 +16,8 @@ EXPERIMENT_NAME="mse_lcm_780m_10b"
 MAX_TOKENS=6000
 MAX_STEPS=100000
 CHECKPOINT_EVERY=5000
+# 数据集名称（datacard 名称，会自动填充 training 和 validation）
+DATA_NAME="pretraining_data"
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -44,13 +46,22 @@ while [[ $# -gt 0 ]]; do
             MAX_STEPS="${1#*=}"
             shift
             ;;
+        --data_name=*)
+            DATA_NAME="${1#*=}"
+            shift
+            ;;
         *)
             echo "未知参数: $1"
             echo "用法: $0 --num_gpus=N [--data_dir=PATH] [--output_dir=PATH] [--max_tokens=N] [--max_steps=N]"
+            echo "     [--data_name=NAME]  # 例如: --data_name=fine_web_edu (会自动使用 fine_web_edu=train 和 fine_web_edu=validation)"
             exit 1
             ;;
     esac
 done
+
+# 自动填充训练和验证数据集名称
+TRAINING_DATA_NAME="${DATA_NAME}=train"
+VALIDATION_DATA_NAME="${DATA_NAME}=validation"
 
 # 构建GPU列表
 GPU_LIST=$(seq -s, 0 $((NUM_GPUS - 1)))
@@ -65,6 +76,9 @@ echo "输出目录: $OUTPUT_DIR"
 echo "实验名称: $EXPERIMENT_NAME"
 echo "Max tokens: $MAX_TOKENS"
 echo "Max steps: $MAX_STEPS"
+echo "数据集名称: $DATA_NAME"
+echo "  - 训练: $TRAINING_DATA_NAME"
+echo "  - 验证: $VALIDATION_DATA_NAME"
 echo "======================================"
 echo ""
 
@@ -105,7 +119,9 @@ CUDA_VISIBLE_DEVICES=$GPU_LIST .venv/bin/python -m torch.distributed.run \
     ++trainer.max_steps=$MAX_STEPS \
     ++trainer.checkpoint_every_n_steps=$CHECKPOINT_EVERY \
     ++trainer.save_model_every_n_steps=$CHECKPOINT_EVERY \
-    ++trainer.publish_metrics_every_n_steps=100
+    ++trainer.publish_metrics_every_n_steps=100 \
+    '++trainer.training_data.0.name="'${TRAINING_DATA_NAME}'"' \
+    '++trainer.validation_data.0.name="'${VALIDATION_DATA_NAME}'"'
 
 # TODO: pdb是submitit在用--debug模式运行指令时自带的。
 

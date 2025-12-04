@@ -22,6 +22,9 @@ from sonar.inference_pipelines.text import TextToEmbeddingModelPipeline
 from sentence_splitter import SentenceSplitter
 from stopes.utils.arrow_utils import nested_numpy_to_pyarrow
 
+# we use s3 as our dataset key, but we actually don't have s3, it is just a placeholder
+DATASET_NAME = "fine_web_edu"
+CLUSTER_NAME = "s3"
 
 def prepare_fine_web(
     output_dir: str = "output/fine_web",
@@ -323,12 +326,10 @@ def prepare_fine_web(
     print(f"📁 输出文件: {output_dir}/data.parquet")
     print(f"📊 处理样本: {processed}")
     print(f"💾 文件大小: {(output_path / 'data.parquet').stat().st_size / 1024 / 1024:.2f} MB")
-    print("\n📝 下一步:")
-    print("1. 更新 lcm/datacards/datacards.yaml:")
-    print(f"   parquet_path:")
-    print(f"     local: \"{output_dir}\"")
-    print("\n2. 开始训练:")
-    print("   bash start_pretrain_780m.sh")
+    print("\n📝 提示:")
+    print("   多卡运行时，datacard 将在所有任务完成后统一更新")
+    print("   如需手动更新，请运行:")
+    print(f"   python scripts/update_datacards.py --output_dir={output_dir} --dataset_name={DATASET_NAME}")
     print("=" * 80)
 
 
