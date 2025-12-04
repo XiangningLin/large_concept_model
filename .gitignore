@@ -117,3 +117,6 @@ mortimer_env.txt
 
 # temporary files
 tmp/
+
+# checkpoints
+checkpoints/
