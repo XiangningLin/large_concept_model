@@ -3,9 +3,9 @@
 # 使用方法: bash pretrain.sh --num_gpus=2
 
 set -e
-# cd /work/nvme/bfaq/xlin5/large_concept_model
-
-cd /projects/p32721/large_concept_model
+# 自动检测项目根目录（脚本所在目录）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
 # 默认参数
 NUM_GPUS=2
@@ -92,12 +92,9 @@ fi
 echo "✓ 数据目录存在"
 echo ""
 
-# 设置环境变量
-# export UV_CACHE_DIR=/work/nvme/bfaq/xlin5/uv_cache
-# export TMPDIR=/work/nvme/bfaq/xlin5/tmp
-
-export UV_CACHE_DIR=/projects/p32721/large_concept_model/uv_cache
-export TMPDIR=/projects/p32721/large_concept_model/tmp
+# 设置环境变量 - 使用大空间目录
+export UV_CACHE_DIR=/work/hdd/bfaq/jlyu3/lcm/uv_cache
+export TMPDIR=/work/hdd/bfaq/jlyu3/lcm/tmp
 
 mkdir -p $TMPDIR $OUTPUT_DIR
 

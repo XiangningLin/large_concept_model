@@ -2,7 +2,9 @@
 # 测试预训练 - 使用100条数据
 set -e
 
-cd /work/nvme/bfaq/xlin5/large_concept_model
+# 自动检测项目根目录（脚本所在目录）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
 echo "🧪 测试LCM 780M预训练（100条数据）"
 echo "==========================================="
@@ -13,9 +15,11 @@ echo "训练步数: 20步（测试用）"
 echo "输出: checkpoints/test_lcm_780m_100"
 echo "==========================================="
 
-# 设置环境变量
-export UV_CACHE_DIR=/work/nvme/bfaq/xlin5/uv_cache
-export TMPDIR=/work/nvme/bfaq/xlin5/tmp
+# 设置环境变量 - 使用大空间目录
+export UV_CACHE_DIR=/work/hdd/bfaq/jlyu3/lcm/uv_cache
+export HF_HOME=/work/hdd/bfaq/jlyu3/lcm/hf_cache
+export HF_DATASETS_CACHE=/work/hdd/bfaq/jlyu3/lcm/hf_cache/datasets
+export TMPDIR=/work/hdd/bfaq/jlyu3/lcm/tmp
 mkdir -p $TMPDIR
 
 # 创建输出目录

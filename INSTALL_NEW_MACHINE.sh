@@ -8,7 +8,7 @@ echo ""
 
 # 配置（根据实际情况修改这些变量）
 WORKSPACE="${WORKSPACE:-$(pwd)}"
-CUDA_VERSION="${CUDA_VERSION:-cu121}"  # 根据 nvidia-smi 查看的版本修改
+CUDA_VERSION="${CUDA_VERSION:-cu124}"  # 根据 nvidia-smi 查看的版本修改
 
 echo "📍 配置信息:"
 echo "   工作目录: $WORKSPACE"

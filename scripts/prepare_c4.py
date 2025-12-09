@@ -7,8 +7,11 @@ Streaming C4 Data Preparation Script
 """
 
 import os
-os.environ["HF_HOME"] = "/projects/p32721/large_concept_model/hf_cache"
-os.environ["HF_DATASETS_CACHE"] = "/projects/p32721/large_concept_model/hf_cache/datasets"
+# 使用大空间目录存储 Hugging Face 缓存（如果环境变量未设置则使用此默认值）
+if "HF_HOME" not in os.environ:
+    os.environ["HF_HOME"] = "/work/hdd/bfaq/jlyu3/lcm/hf_cache"
+if "HF_DATASETS_CACHE" not in os.environ:
+    os.environ["HF_DATASETS_CACHE"] = "/work/hdd/bfaq/jlyu3/lcm/hf_cache/datasets"
 
 from pathlib import Path
 import torch

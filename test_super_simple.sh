@@ -2,8 +2,9 @@
 # 超简化测试 - 10条数据，确保能跑通
 set -e
 
-# cd /work/nvme/bfaq/xlin5/large_concept_model
-cd /projects/p32721/large_concept_model
+# 自动检测项目根目录（脚本所在目录）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
 echo "🧪 超简化测试（10条数据）"
 echo "======================================"
@@ -11,16 +12,11 @@ echo "这是最简单的测试，如果这个都不work，说明环境有问题"
 echo "注意查看是否具备SSL证书"
 echo ""
 
-# 设置环境变量
-# export UV_CACHE_DIR=/work/nvme/bfaq/xlin5/uv_cache
-# export HF_HOME=/work/nvme/bfaq/xlin5/hf_cache
-# export HF_DATASETS_CACHE=/work/nvme/bfaq/xlin5/hf_cache/datasets
-# export TMPDIR=/work/nvme/bfaq/xlin5/tmp
-
-export UV_CACHE_DIR=/projects/p32721/large_concept_model/uv_cache  
-export HF_HOME=/projects/p32721/large_concept_model/hf_cache
-export HF_DATASETS_CACHE=/projects/p32721/large_concept_model/hf_cache/datasets
-export TMPDIR=/projects/p32721/large_concept_model/tmp
+# 设置环境变量 - 使用大空间目录
+export UV_CACHE_DIR=/work/hdd/bfaq/jlyu3/lcm/uv_cache
+export HF_HOME=/work/hdd/bfaq/jlyu3/lcm/hf_cache
+export HF_DATASETS_CACHE=/work/hdd/bfaq/jlyu3/lcm/hf_cache/datasets
+export TMPDIR=/work/hdd/bfaq/jlyu3/lcm/tmp
 
 mkdir -p $TMPDIR logs output/test_10
 

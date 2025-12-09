@@ -8,8 +8,11 @@ Multi-GPU Parallel C4 Data Preparation
 """
 
 import os
-os.environ["HF_HOME"] = "/work/nvme/bfaq/xlin5/hf_cache"
-os.environ["HF_DATASETS_CACHE"] = "/work/nvme/bfaq/xlin5/hf_cache/datasets"
+# 使用大空间目录存储 Hugging Face 缓存（如果环境变量未设置则使用此默认值）
+if "HF_HOME" not in os.environ:
+    os.environ["HF_HOME"] = "/work/hdd/bfaq/jlyu3/lcm/hf_cache"
+if "HF_DATASETS_CACHE" not in os.environ:
+    os.environ["HF_DATASETS_CACHE"] = "/work/hdd/bfaq/jlyu3/lcm/hf_cache/datasets"
 
 import asyncio
 from pathlib import Path

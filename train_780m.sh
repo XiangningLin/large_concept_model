@@ -5,11 +5,20 @@ set -e
 # ========================================================
 # 配置
 # ========================================================
-export PROJECT_ROOT="/work/nvme/bfaq/xlin5/large_concept_model"
-# 使用已处理好的数据（从 jlyu3 复制）
-export DATA_DIR="/work/nvme/bfaq/xlin5/large_concept_model/processed_data/tom_tracking_data"
-export CHECKPOINT_DIR="/work/nvme/bfaq/xlin5/large_concept_model/checkpoints/tom_tracking_780M_2gpu"
+# 自动检测项目根目录（脚本所在目录）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR"
+
+# 使用大空间目录存储数据和检查点
+export DATA_DIR="/work/hdd/bfaq/jlyu3/lcm/processed_data/tom_tracking_data"
+export CHECKPOINT_DIR="/work/hdd/bfaq/jlyu3/lcm/checkpoints/tom_tracking_780M_2gpu"
 export EXPERIMENT_NAME="tom_tracking_780M_2gpu"
+
+# 设置环境变量 - 使用大空间目录
+export UV_CACHE_DIR=/work/hdd/bfaq/jlyu3/lcm/uv_cache
+export HF_HOME=/work/hdd/bfaq/jlyu3/lcm/hf_cache
+export HF_DATASETS_CACHE=/work/hdd/bfaq/jlyu3/lcm/hf_cache/datasets
+export TMPDIR=/work/hdd/bfaq/jlyu3/lcm/tmp
 # ========================================================
 
 cd "$PROJECT_ROOT"
