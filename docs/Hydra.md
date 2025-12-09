@@ -184,4 +184,14 @@ bash pretrain.sh \
 
 LCM的eval功能里，Hydra只用于在slurm（submitit）模式下来读取slurm有关的参数。如果是在已有的计算节点上运行任务的话，可以忽略这个设置，把它当作纯粹依赖argparse的部分。
 
-
+```sh
+# 使用 datacard（假设 fine_web_edu 在 datacard 中）
+python -m lcm.evaluation \
+    --predictor base_lcm \
+    --model_card checkpoints/mse_lcm_780m/model_card.yaml \
+    --tasks lcm_generation \
+    --dataset.name "fine_web_edu=test" \
+    --data_loading.batch_size 16 \
+    --dump_dir output_results
+    # source_column 会自动从 datacard 加载为 "text_sentences_sonar_emb"
+```
