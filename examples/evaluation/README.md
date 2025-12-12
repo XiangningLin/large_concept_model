@@ -61,7 +61,6 @@ launcher = Launcher(
 ```
 
 
-
 ## Step 2: Choose the predictor for evaluation
 
 To run the evaluation, we first need to map the model to a `Predictor`, which is an object that streamlines a number of steps: Loading the models, reading the prompts, performing the inference, decoding the outputs according to a given user setting, and finally formatting the text into the user-friendly format. Currently, the list of supported model families and their predictors is below. All predictors are found in "lcm/evaluation/predictors" and are registered in lcm.evaluation.predictors`_PREDICTOR_CONFIG_MAP`
@@ -75,6 +74,7 @@ To run the evaluation, we first need to map the model to a `Predictor`, which is
 | base_lcm                | Base LCM               | `model_card`                                               |
 | two_tower_diffusion_lcm | Two-tower diffusion LCM| `model_card`                                               |
 
+**Note**: Both `base_lcm` and `two_tower_diffusion_lcm` predictors support models of all sizes (130M, 370M, 780M, 1.6B, 7B). The predictor automatically loads the model architecture from the `model_card.yaml` file.
 
 Next, we specify how the decoder generate texts with different generation options. 
 

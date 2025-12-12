@@ -58,22 +58,23 @@ recipes/
 ├── train/
 │   ├── defaults.yaml              ✅ 被加载（作为主配置）
 │   ├── pretrain/
-│   │   ├── mse_780M.yaml          ✅ 可通过 +pretrain=mse_780M 加载 (base LCM 780M)
-│   │   ├── mse.yaml               ✅ 可通过 +pretrain=mse 加载（base LCM 1.6B）
-│   │   ├── two_tower_780M.yaml    ✅ 可通过 +pretrain=two_tower_780M 加载
-│   │   └── two_tower.yaml          ✅ 可通过 +pretrain=two_tower 加载
+│   │   ├── mse_780M.yaml          ✅ +pretrain=mse_780M (Base LCM 780M)
+│   │   ├── mse.yaml               ✅ +pretrain=mse (Base LCM 1.6B)
+│   │   ├── two_tower_780M.yaml    ✅ +pretrain=two_tower_780M (Two-Tower 780M)
+│   │   └── two_tower.yaml         ✅ +pretrain=two_tower (Two-Tower 1.6B)
+│   │   # 可用架构: base_lcm_{130M,370M,780M,1_6B}, two_tower_diffusion_lcm_{130M,370M,780M,1_6B,7B}
 │   ├── finetune/
-│   │   ├── mse.yaml                ✅ 可通过 +finetune=mse 加载
-│   │   └── two_tower.yaml          ✅ 可通过 +finetune=two_tower 加载
+│   │   ├── mse.yaml                ✅ +finetune=mse
+│   │   └── two_tower.yaml          ✅ +finetune=two_tower
 │   └── post_training/
-│       ├── tom_tracking.yaml       ✅ 可通过 +post_training=tom_tracking 加载
-│       └── tom_tracking_4GPU.yaml  ✅ 可通过 +post_training=tom_tracking_4GPU 加载
+│       ├── tom_tracking.yaml       ✅ +post_training=tom_tracking
+│       └── tom_tracking_4GPU.yaml  ✅ +post_training=tom_tracking_4GPU
 └── common/
     ├── requirements.yaml           ✅ 通过 defaults 中的 requirements@trainer 加载
     ├── evals.yaml                  ✅ 可能被评估系统使用
     └── launcher/
-        ├── standalone.yaml         ✅ 可通过 +launcher=standalone 加载
-        └── submitit.yaml            ✅ 可通 +launcher=submitit 加载（默认）
+        ├── standalone.yaml         ✅ +launcher=standalone
+        └── submitit.yaml            ✅ +launcher=submitit（默认）
 ```
 
 ## LCM 的 CLI：
@@ -152,11 +153,21 @@ python -m torch.distributed.run \
 
 LCM用了一个schema TrainingConfig来包装和validate我们的Hydra Config。理论上我们只需要修改recipes/train下的文件中存在的那些参数就可以控制训练流程（前提是datacard和数据文件已经正确配置和存在）。
 
-在pretrain.sh里面，我们也通过环境变量来实现hydra参数的覆盖，下面是一个完整参数的例子：
+在pretrain.sh里面，我们通过参数来实现hydra参数的覆盖，下面是使用示例：
 
 ```sh
+# 训练 Base LCM 780M（默认）
+bash pretrain.sh --num_gpus=2
+
+# 训练 Two-Tower Diffusion LCM 780M
+bash pretrain.sh --model=two_tower_780M --num_gpus=4
+
+# 训练 Base LCM 1.6B
+bash pretrain.sh --model=mse --num_gpus=8
+
 # 完整参数示例
 bash pretrain.sh \
+    --model=two_tower_780M \
     --num_gpus=4 \
     --data_dir=output/fine_web_data \
     --output_dir=checkpoints/my_experiment \
@@ -165,21 +176,8 @@ bash pretrain.sh \
     --max_steps=100000 \
     --data_name=fine_web_edu
 
-# 最小参数示例（使用所有默认值）
-bash pretrain.sh
-
-# 只指定必要参数
-bash pretrain.sh \
-    --num_gpus=2 \
-    --data_name=fine_web_edu
-
-# 常用配置示例
-bash pretrain.sh \
-    --num_gpus=4 \
-    --output_dir=checkpoints/fine_web_780m \
-    --experiment_name=fine_web_780m_exp \
-    --max_steps=50000 \
-    --data_name=fine_web_edu
+# 可用模型: mse_780M, mse, two_tower_780M, two_tower
+# 或任何 recipes/train/pretrain/ 下的配置文件名（不带 .yaml）
 ```
 
 ### eval：混合Hydra CLI与argparse

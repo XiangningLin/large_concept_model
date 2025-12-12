@@ -1,6 +1,7 @@
 #!/bin/bash
-# LCM 780M 预训练 - 支持可配置GPU数量
-# 使用方法: bash pretrain.sh --num_gpus=2
+# LCM 预训练 - 支持可配置模型和GPU数量
+# 使用方法: bash pretrain.sh --model=mse_780M --num_gpus=2
+#          bash pretrain.sh --model=two_tower_780M --num_gpus=4
 
 set -e
 # 自动检测项目根目录（脚本所在目录）
@@ -8,20 +9,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # 默认参数
+MODEL_CONFIG="mse_780M"  # 可选: mse_780M, mse, two_tower_780M, two_tower, 或自定义
 NUM_GPUS=2
-# DATA_DIR="output/c4_10b"
 DATA_DIR="output/fine_web"
-OUTPUT_DIR="checkpoints/mse_lcm_780m"
-EXPERIMENT_NAME="mse_lcm_780m_10b"
+OUTPUT_DIR="checkpoints/lcm_pretrain"
+EXPERIMENT_NAME="lcm_pretrain"
 MAX_TOKENS=6000
 MAX_STEPS=100000
 CHECKPOINT_EVERY=5000
-# 数据集名称（datacard 名称，会自动填充 training 和 validation）
 DATA_NAME="pretraining_data"
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --model=*)
+            MODEL_CONFIG="${1#*=}"
+            shift
+            ;;
         --num_gpus=*)
             NUM_GPUS="${1#*=}"
             shift
@@ -52,8 +56,20 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "未知参数: $1"
-            echo "用法: $0 --num_gpus=N [--data_dir=PATH] [--output_dir=PATH] [--max_tokens=N] [--max_steps=N]"
-            echo "     [--data_name=NAME]  # 例如: --data_name=fine_web_edu (会自动使用 fine_web_edu=train 和 fine_web_edu=validation)"
+            echo "用法: $0 [--model=CONFIG] [--num_gpus=N] [--data_dir=PATH] [--output_dir=PATH]"
+            echo "          [--max_tokens=N] [--max_steps=N] [--data_name=NAME]"
+            echo ""
+            echo "可用模型配置 (--model):"
+            echo "  Base LCM:"
+            echo "    - mse_780M       : Base LCM 780M (默认)"
+            echo "    - mse            : Base LCM 1.6B"
+            echo "  Two-Tower Diffusion LCM:"
+            echo "    - two_tower_780M : Two-Tower Diffusion LCM 780M"
+            echo "    - two_tower      : Two-Tower Diffusion LCM 1.6B"
+            echo ""
+            echo "示例:"
+            echo "  bash pretrain.sh --model=mse_780M --num_gpus=2"
+            echo "  bash pretrain.sh --model=two_tower_780M --num_gpus=4"
             exit 1
             ;;
     esac
@@ -67,8 +83,9 @@ VALIDATION_DATA_NAME="${DATA_NAME}=validation"
 GPU_LIST=$(seq -s, 0 $((NUM_GPUS - 1)))
 
 echo "======================================"
-echo "🚀 LCM 780M预训练"
+echo "🚀 LCM 预训练"
 echo "======================================"
+echo "模型配置: $MODEL_CONFIG"
 echo "GPU数量: $NUM_GPUS"
 echo "GPU列表: $GPU_LIST"
 echo "数据目录: $DATA_DIR"
@@ -101,14 +118,13 @@ mkdir -p $TMPDIR $OUTPUT_DIR
 # 启动训练
 echo "🚀 启动训练..."
 echo ""
-# TODO: added
 CUDA_VISIBLE_DEVICES=$GPU_LIST .venv/bin/python -m torch.distributed.run \
     --standalone \
     --nnodes=1 \
     --nproc-per-node=$NUM_GPUS \
     -m lcm.train \
     launcher=standalone \
-    +pretrain=mse_780M \
+    +pretrain=$MODEL_CONFIG \
     ++trainer.output_dir=$OUTPUT_DIR \
     ++trainer.experiment_name=$EXPERIMENT_NAME \
     ++trainer.data_loading_config.max_tokens=$MAX_TOKENS \
