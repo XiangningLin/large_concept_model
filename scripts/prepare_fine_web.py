@@ -27,6 +27,7 @@ from datasets import load_dataset
 from sonar.inference_pipelines.text import TextToEmbeddingModelPipeline
 from sentence_splitter import SentenceSplitter
 from stopes.utils.arrow_utils import nested_numpy_to_pyarrow
+from timer import DistributedTimer
 
 # we use s3 as our dataset key, but we actually don't have s3, it is just a placeholder
 DATASET_NAME = "fine_web_edu"
@@ -76,7 +77,37 @@ def prepare_fine_web(
         我们通过部署stopes的nested_numpy_to_pyarrow函数将可变长度列表转换为固定长度列表，从而解决了这个问题。
         见第270行代码：text_sentences_sonar_emb_pa = nested_numpy_to_pyarrow(all_embeddings)。
     """
-    
+
+    timer_root = Path(output_dir)
+    timer = DistributedTimer("prepare_fine_web", root_dir=timer_root)
+    timer.start()
+    try:
+        return _prepare_fine_web_impl(
+            output_dir=output_dir,
+            num_samples=num_samples,
+            start_index=start_index,
+            batch_size=batch_size,
+            max_sentence_length=max_sentence_length,
+            add_split_column=add_split_column,
+            train_ratio=train_ratio,
+            seed=seed,
+            checkpoint_interval=checkpoint_interval,
+        )
+    finally:
+        timer.stop()
+
+
+def _prepare_fine_web_impl(
+    output_dir: str = "output/fine_web",
+    num_samples = None,  # int | None: 要处理的样本数量，None 表示处理整个数据集
+    start_index: int = 0,
+    batch_size: int = 10,
+    max_sentence_length: int = 256,
+    add_split_column: bool = True,
+    train_ratio: float = 0.8,
+    seed: int = 42,
+    checkpoint_interval: int = 50000,  # 每处理多少个样本保存一个检查点文件
+):
     # 处理 num_samples 的默认值和 None 情况
     # 支持字符串 "None"、"none" 或 Python None
     if num_samples is None or (isinstance(num_samples, str) and num_samples.lower() in ["none", "all"]):
@@ -440,6 +471,71 @@ def prepare_fine_web(
     if existing_data is not None:
         total_expected = (total_expected or 0) + existing_samples
     with tqdm(total=total_expected, desc="处理进度", unit="样本", initial=existing_samples) as pbar:
+        def _encode_batch(batch_texts, batch_originals):
+            nonlocal processed, last_processed_index, all_data, current_checkpoint_data, next_checkpoint_number
+            if not batch_texts:
+                return
+
+            flat_sentences = []
+            doc_offsets = []
+            offset = 0
+            for sents in batch_texts:
+                length = len(sents)
+                doc_offsets.append((offset, length))
+                flat_sentences.extend(sents)
+                offset += length
+
+            if not flat_sentences:
+                return
+
+            doc_embeddings = sonar_pipeline.predict(
+                flat_sentences,
+                source_lang="eng_Latn"
+            )
+
+            if not isinstance(doc_embeddings, torch.Tensor):
+                raise ValueError(
+                    f"Expected torch.Tensor from SONAR predict, got {type(doc_embeddings)}"
+                )
+            if len(doc_embeddings.shape) != 2:
+                raise ValueError(
+                    f"Expected 2D tensor (num_sentences, embedding_dim), got shape {doc_embeddings.shape}"
+                )
+
+            flat_embeddings = doc_embeddings.cpu()
+
+            for i, (start, length) in enumerate(doc_offsets):
+                if length == 0:
+                    continue
+                if not process_all and processed >= num_samples:
+                    break
+
+                emb_numpy = flat_embeddings[start:start + length].numpy()
+                dataset_idx = batch_originals[i].get('dataset_index', start_index + processed)
+                sample_data = {
+                    'text_sentences': batch_texts[i],
+                    'text_sentences_sonar_emb': emb_numpy,
+                    'url': batch_originals[i]['url'],
+                    'timestamp': batch_originals[i]['timestamp'],
+                }
+
+                processed += 1
+                last_processed_index = dataset_idx
+                pbar.update(1)
+
+                if use_checkpoints:
+                    current_checkpoint_data.append(sample_data)
+                    if len(current_checkpoint_data) >= checkpoint_interval:
+                        save_checkpoint(current_checkpoint_data, next_checkpoint_number)
+                        all_data.extend(current_checkpoint_data)
+                        current_checkpoint_data = []
+                        next_checkpoint_number += 1
+                else:
+                    all_data.append(sample_data)
+
+                if processed % 100 == 0:
+                    save_metadata()
+
         batch_texts = []
         batch_originals = []
         
@@ -472,135 +568,25 @@ def prepare_fine_web(
                 'dataset_index': idx,  # 保存原始索引，用于追踪
             })
             
-            # 批量编码
+            # 批量编码（将一个 batch 展平后统一编码，再切回每个 sample）
             if len(batch_texts) >= batch_size:
-                # 处理这一批
-                for i, sents in enumerate(batch_texts):
-                    try:
-                        # 编码句子
-                        embeddings = sonar_pipeline.predict(
-                            sents,
-                            source_lang="eng_Latn"
-                        )
-                        
-                        # 🔍 Validate embeddings format (only for first successfully processed sample)
-                        if processed == 0:  # Only print for the first sample
-                            print(f"\n🔍 [Validation] First sample embeddings info:", flush=True)
-                            print(f"   - embeddings type: {type(embeddings)}", flush=True)
-                            print(f"   - embeddings shape: {embeddings.shape if hasattr(embeddings, 'shape') else 'N/A'}", flush=True)
-                            if hasattr(embeddings, 'cpu'):
-                                emb_numpy = embeddings.cpu().numpy()
-                                print(f"   - numpy array type: {type(emb_numpy)}", flush=True)
-                                print(f"   - numpy array shape: {emb_numpy.shape}", flush=True)
-                                print(f"   - numpy array dtype: {emb_numpy.dtype}", flush=True)
-                                print(f"   - type after converting to list: {type(emb_numpy.tolist())}", flush=True)
-                                print(f"   - list length: {len(emb_numpy.tolist())}", flush=True)
-                                if len(emb_numpy.tolist()) > 0:
-                                    print(f"   - list[0] type: {type(emb_numpy.tolist()[0])}", flush=True)
-                                    if isinstance(emb_numpy.tolist()[0], list):
-                                        print(f"   - list[0] length: {len(emb_numpy.tolist()[0])}", flush=True)
-                            sys.stdout.flush()  # Force flush output buffer
-                        
-                        # 保存数据（记录当前处理的索引）
-                        dataset_idx = batch_originals[i].get('dataset_index', start_index + processed)
-                        
-                        # 准备数据字典
-                        sample_data = {
-                            'text_sentences': sents,
-                            'text_sentences_sonar_emb': embeddings.cpu().numpy(),
-                            'url': batch_originals[i]['url'],
-                            'timestamp': batch_originals[i]['timestamp'],
-                        }
-                        
-                        processed += 1
-                        last_processed_index = dataset_idx  # 使用数据集中的实际索引
-                        pbar.update(1)
-                        
-                        # 如果启用检查点，将数据添加到当前检查点；否则直接添加到 all_data
-                        if use_checkpoints:
-                            current_checkpoint_data.append(sample_data)
-                            
-                            # 达到检查点间隔，保存检查点
-                            if len(current_checkpoint_data) >= checkpoint_interval:
-                                save_checkpoint(current_checkpoint_data, next_checkpoint_number)
-                                # 将检查点数据添加到 all_data（用于最终合并）
-                                all_data.extend(current_checkpoint_data)
-                                current_checkpoint_data = []  # 清空当前检查点
-                                next_checkpoint_number += 1
-                        else:
-                            # 未启用检查点，直接添加到 all_data
-                            all_data.append(sample_data)
-                        
-                        # 每处理 100 个样本保存一次 metadata（防止意外中断丢失进度）
-                        if processed % 100 == 0:
-                            save_metadata()
-                        
-                    except Exception as e:
-                        print(f"\n⚠️  Processing failed: {str(e)}")
-                        continue
-                
+                _encode_batch(batch_texts, batch_originals)
                 batch_texts = []
                 batch_originals = []
         
-        # 处理剩余的数据
+        # 处理剩余的数据（也使用批处理）
         if batch_texts and (process_all or processed < num_samples):
-            for i, sents in enumerate(batch_texts):
-                if not process_all and processed >= num_samples:
-                    break
-                try:
-                    embeddings = sonar_pipeline.predict(
-                        sents,
-                        source_lang="eng_Latn"
-                    )
-                    
-                    # 🔍 Validate embeddings format (remaining data)
-                    if processed == 0 and len(all_data) == 0:  # Only print for the first sample
-                        print(f"\n🔍 [Validation] Remaining data first sample embeddings info:", flush=True)
-                        print(f"   - embeddings type: {type(embeddings)}", flush=True)
-                        print(f"   - embeddings shape: {embeddings.shape if hasattr(embeddings, 'shape') else 'N/A'}", flush=True)
-                        if hasattr(embeddings, 'cpu'):
-                            emb_numpy = embeddings.cpu().numpy()
-                            print(f"   - numpy array type: {type(emb_numpy)}", flush=True)
-                            print(f"   - numpy array shape: {emb_numpy.shape}", flush=True)
-                        sys.stdout.flush()  # Force flush output buffer
-                    
-                    # 保存数据（记录当前处理的索引）
-                    dataset_idx = batch_originals[i].get('dataset_index', start_index + processed)
-                    
-                    # 准备数据字典
-                    sample_data = {
-                        'text_sentences': sents,
-                        'text_sentences_sonar_emb': embeddings.cpu().numpy(),
-                        'url': batch_originals[i]['url'],
-                        'timestamp': batch_originals[i]['timestamp'],
-                    }
-                    
-                    processed += 1
-                    last_processed_index = dataset_idx  # 使用数据集中的实际索引
-                    pbar.update(1)
-                    
-                    # 如果启用检查点，将数据添加到当前检查点；否则直接添加到 all_data
-                    if use_checkpoints:
-                        current_checkpoint_data.append(sample_data)
-                        
-                        # 达到检查点间隔，保存检查点
-                        if len(current_checkpoint_data) >= checkpoint_interval:
-                            save_checkpoint(current_checkpoint_data, next_checkpoint_number)
-                            # 将检查点数据添加到 all_data（用于最终合并）
-                            all_data.extend(current_checkpoint_data)
-                            current_checkpoint_data = []  # 清空当前检查点
-                            next_checkpoint_number += 1
-                    else:
-                        # 未启用检查点，直接添加到 all_data
-                        all_data.append(sample_data)
-                    
-                    # 每处理 100 个样本保存一次 metadata（防止意外中断丢失进度）
-                    if processed % 100 == 0:
-                        save_metadata()
-                    
-                except Exception as e:
-                    print(f"\n⚠️  Processing failed: {str(e)}")
-                    continue
+            if not process_all:
+                remaining_needed = num_samples - processed
+                if remaining_needed <= 0:
+                    batch_texts = []
+                    batch_originals = []
+                else:
+                    batch_texts = batch_texts[:remaining_needed]
+                    batch_originals = batch_originals[:remaining_needed]
+
+            if batch_texts:
+                _encode_batch(batch_texts, batch_originals)
     
     # 如果启用检查点，处理剩余的检查点数据
     if use_checkpoints and current_checkpoint_data:

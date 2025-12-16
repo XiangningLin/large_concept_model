@@ -15,6 +15,7 @@ if "HF_DATASETS_CACHE" not in os.environ:
 
 from pathlib import Path
 import torch
+import numpy as np
 from tqdm import tqdm
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -131,59 +132,87 @@ def prepare_c4_streaming(
                 'timestamp': sample.get('timestamp', ''),
             })
             
-            # 批量编码
+            # ✅ 批量编码：对每个文档单独调用 predict
             if len(batch_texts) >= batch_size:
-                # 处理这一批
+                # SONAR predict 期望 List[str]（单个文档的句子列表），返回该文档所有句子的 embeddings
+                # 返回格式：torch.Tensor，形状为 (num_sentences, embedding_dim)
                 for i, sents in enumerate(batch_texts):
-                    try:
-                        # 编码句子
-                        embeddings = sonar_pipeline.predict(
-                            sents,
-                            source_lang="eng_Latn"
-                        )
-                        
-                        # 保存数据
-                        all_data.append({
-                            'text_sentences': sents,
-                            'text_sentences_sonar_emb': embeddings.cpu().numpy(),
-                            'url': batch_originals[i]['url'],
-                            'timestamp': batch_originals[i]['timestamp'],
-                        })
-                        
-                        processed += 1
-                        pbar.update(1)
-                        
-                    except Exception as e:
-                        print(f"\n⚠️  处理失败: {str(e)}")
-                        continue
-                
-                batch_texts = []
-                batch_originals = []
-        
-        # 处理剩余的数据
-        if batch_texts and processed < num_samples:
-            for i, sents in enumerate(batch_texts):
-                if processed >= num_samples:
-                    break
-                try:
-                    embeddings = sonar_pipeline.predict(
-                        sents,
+                    # 对每个文档调用 predict，传入该文档的句子列表
+                    doc_embeddings = sonar_pipeline.predict(
+                        sents,  # List[str] - 单个文档的句子列表
                         source_lang="eng_Latn"
                     )
                     
+                    # 验证返回格式：应该是 torch.Tensor，形状为 (num_sentences, embedding_dim)
+                    if not isinstance(doc_embeddings, torch.Tensor):
+                        raise ValueError(
+                            f"Expected torch.Tensor from SONAR predict, got {type(doc_embeddings)}"
+                        )
+                    if len(doc_embeddings.shape) != 2:
+                        raise ValueError(
+                            f"Expected 2D tensor (num_sentences, embedding_dim), got shape {doc_embeddings.shape}"
+                        )
+                    
+                    # 转换为 numpy（SONAR 返回 torch.Tensor）
+                    emb_numpy = doc_embeddings.cpu().numpy()  # shape: (num_sentences, embedding_dim)
+                    
+                    # 保存数据
                     all_data.append({
                         'text_sentences': sents,
-                        'text_sentences_sonar_emb': embeddings.cpu().numpy(),
+                        'text_sentences_sonar_emb': emb_numpy,
                         'url': batch_originals[i]['url'],
                         'timestamp': batch_originals[i]['timestamp'],
                     })
                     
                     processed += 1
                     pbar.update(1)
-                    
-                except Exception as e:
-                    print(f"\n⚠️  处理失败: {str(e)}")
-                    continue
+                
+                batch_texts = []
+                batch_originals = []
+        
+        # ✅ 处理剩余的数据（也使用批处理）
+        if batch_texts and processed < num_samples:
+            # 过滤掉已达到目标数量的样本
+            remaining_needed = num_samples - processed
+            if remaining_needed > 0:
+                batch_texts = batch_texts[:remaining_needed]
+                batch_originals = batch_originals[:remaining_needed]
+                
+                if batch_texts:
+                    # ✅ 批量处理剩余数据：对每个文档单独调用 predict
+                    # SONAR predict 期望 List[str]（单个文档的句子列表），返回该文档所有句子的 embeddings
+                    for i, sents in enumerate(batch_texts):
+                        if processed >= num_samples:
+                            break
+                        
+                        # 对每个文档调用 predict，传入该文档的句子列表
+                        doc_embeddings = sonar_pipeline.predict(
+                            sents,  # List[str] - 单个文档的句子列表
+                            source_lang="eng_Latn"
+                        )
+                        
+                        # 验证返回格式：应该是 torch.Tensor，形状为 (num_sentences, embedding_dim)
+                        if not isinstance(doc_embeddings, torch.Tensor):
+                            raise ValueError(
+                                f"Expected torch.Tensor from SONAR predict, got {type(doc_embeddings)}"
+                            )
+                        if len(doc_embeddings.shape) != 2:
+                            raise ValueError(
+                                f"Expected 2D tensor (num_sentences, embedding_dim), got shape {doc_embeddings.shape}"
+                            )
+                        
+                        # 转换为 numpy（SONAR 返回 torch.Tensor）
+                        emb_numpy = doc_embeddings.cpu().numpy()  # shape: (num_sentences, embedding_dim)
+                        
+                        all_data.append({
+                            'text_sentences': sents,
+                            'text_sentences_sonar_emb': emb_numpy,
+                            'url': batch_originals[i]['url'],
+                            'timestamp': batch_originals[i]['timestamp'],
+                        })
+                        
+                        processed += 1
+                        pbar.update(1)
     
     # 保存为Parquet文件
     print(f"\n💾 保存数据到 {output_dir}/data.parquet ...")

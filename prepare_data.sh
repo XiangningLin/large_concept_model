@@ -5,7 +5,9 @@
 # TODO: add HF_TOKEN
 
 set -e
-# cd /work/nvme/bfaq/xlin5/large_concept_model
+# 自动检测项目根目录（脚本所在目录）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
 # 默认参数
 NUM_GPUS=2
@@ -95,13 +97,14 @@ echo "随机种子: $SEED"
 echo "======================================"
 echo ""
 
-# 设置环境变量 - 使用大空间目录
-export UV_CACHE_DIR=/work/hdd/bfaq/jlyu3/lcm/uv_cache
-export HF_HOME=/work/hdd/bfaq/jlyu3/lcm/hf_cache
-export HF_DATASETS_CACHE=/work/hdd/bfaq/jlyu3/lcm/hf_cache/datasets
-export TMPDIR=/work/hdd/bfaq/jlyu3/lcm/tmp
+# 设置环境变量 - 如果未设置，使用项目目录下的临时目录
+# 允许通过环境变量覆盖这些路径
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$SCRIPT_DIR/.cache/uv_cache}"
+export HF_HOME="${HF_HOME:-$SCRIPT_DIR/.cache/hf_cache}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$SCRIPT_DIR/.cache/hf_cache/datasets}"
+export TMPDIR="${TMPDIR:-$SCRIPT_DIR/tmp}"
 
-mkdir -p $TMPDIR logs $OUTPUT_DIR
+mkdir -p "$TMPDIR" logs "$OUTPUT_DIR"
 
 # 清理旧的日志文件（避免混淆）
 echo "🧹 清理旧的日志文件..."

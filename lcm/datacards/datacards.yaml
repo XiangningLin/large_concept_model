@@ -29,7 +29,7 @@ target_text_column: "reference_output_sentences"
 ---
 name: "fine_web_edu"
 parquet_path:
-  s3: "output/fine_web_test"
+  s3: "output/my_fineweb_test"
 source_column: "text_sentences_sonar_emb"
 source_text_column: "text_sentences"
 # partition columns:

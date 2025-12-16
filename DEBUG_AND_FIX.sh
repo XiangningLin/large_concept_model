@@ -2,7 +2,9 @@
 # 诊断和修复LCM环境问题
 set +e  # 允许命令失败，继续执行
 
-cd /work/nvme/bfaq/xlin5/large_concept_model
+# 自动检测项目根目录（脚本所在目录）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
 echo "======================================"
 echo "🔍 LCM环境诊断和修复工具"
@@ -123,11 +125,13 @@ echo "======================================"
 echo ""
 
 # 创建最小测试脚本
-cat > test_minimal.sh << 'TESTEOF'
+cat > test_minimal.sh << TESTEOF
 #!/bin/bash
 # 最小化测试脚本
 set -e
-cd /work/nvme/bfaq/xlin5/large_concept_model
+# 自动检测项目根目录（脚本所在目录）
+SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+cd "\$SCRIPT_DIR"
 
 echo "🧪 最小化测试"
 echo ""
@@ -163,7 +167,7 @@ echo ""
 echo "🚀 建议的修复步骤:"
 echo ""
 echo "1️⃣ 如果包有问题，重新安装:"
-echo "   cd /work/nvme/bfaq/xlin5/large_concept_model"
+echo "   cd \"$SCRIPT_DIR\""
 echo "   rm -rf .venv"
 echo "   uv sync --python 3.10 --extra cpu --extra eval --extra data"
 echo ""

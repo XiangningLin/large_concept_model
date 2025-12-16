@@ -98,7 +98,6 @@ async def run(config: TrainingConfig):
 
     await wait_on
 
-
 @hydra.main(
     version_base="1.2",
     config_path="../../recipes/train",

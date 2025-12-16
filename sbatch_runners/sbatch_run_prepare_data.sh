@@ -10,19 +10,6 @@
 #SBATCH --output=logs/prepare_data-%j.out
 #SBATCH --error=logs/prepare_data-%j.err
 
-# 设置环境变量 - 使用大空间目录
-export UV_CACHE_DIR=/work/hdd/bfaq/jlyu3/lcm/uv_cache
-export HF_HOME=/work/hdd/bfaq/jlyu3/lcm/hf_cache
-export HF_DATASETS_CACHE=/work/hdd/bfaq/jlyu3/lcm/hf_cache/datasets
-export TMPDIR=/work/hdd/bfaq/jlyu3/lcm/tmp
-
-# Hugging Face Token (如果需要访问私有数据集)
-# 如果环境变量中已有，则使用环境变量；否则使用默认值
-# TODO: set your huggingface token 
-
-# 设置 Python 无缓冲输出
-export PYTHONUNBUFFERED=1
-
 # 切换到项目目录
 # 在 SLURM 环境中，${BASH_SOURCE[0]} 可能指向临时脚本位置
 # 优先使用 SLURM_SUBMIT_DIR（如果可用），否则使用硬编码路径
@@ -35,8 +22,23 @@ elif [ -n "${BASH_SOURCE[0]}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
     PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 else
     # 使用硬编码路径作为后备方案
-    PROJECT_ROOT="/projects/bfaq/jlyu3/large_concept_model"
+    PROJECT_ROOT="/projects/p32721/large_concept_model"
 fi
+
+# 设置环境变量 - 如果未设置，使用项目目录下的临时目录
+# 在 SLURM 环境中，如果用户有 /work 目录权限，可以通过环境变量设置
+# 否则使用项目目录下的临时目录
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$PROJECT_ROOT/.cache/uv_cache}"
+export HF_HOME="${HF_HOME:-$PROJECT_ROOT/.cache/hf_cache}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$PROJECT_ROOT/.cache/hf_cache/datasets}"
+export TMPDIR="${TMPDIR:-$PROJECT_ROOT/tmp}"
+
+# Hugging Face Token (如果需要访问私有数据集)
+# 如果环境变量中已有，则使用环境变量；否则使用默认值
+# TODO: set your huggingface token 
+
+# 设置 Python 无缓冲输出
+export PYTHONUNBUFFERED=1
 
 cd "$PROJECT_ROOT" || {
     echo "❌ 错误：无法切换到项目目录: $PROJECT_ROOT"
@@ -75,7 +77,7 @@ fi
 bash "$PREPARE_DATA_SCRIPT" \
     --num_gpus=8 \
     --num_samples=9670000 \
-    --output_dir=/work/hdd/bfaq/jlyu3/lcm/preprocessed_data
+    --output_dir="${OUTPUT_DIR:-$PROJECT_ROOT/output/preprocessed_data}"
 
 echo ""
 echo "=========================================="

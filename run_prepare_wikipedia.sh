@@ -27,7 +27,12 @@ salloc --account=p32721 --partition=gengpu --nodes=1 --mem=256G \
        --cpus-per-task=8 --gres=gpu:a100:1 --time=6:00:00 \
        bash -c '
 cd /projects/p32721/large_concept_model
-export LD_LIBRARY_PATH="/gpfs/projects/p32721/large_concept_model/.venv/lib:/home/tgx0519/.conda/envs/lcm-helper/lib:$LD_LIBRARY_PATH"
+# 使用 CONDA_PREFIX 自动检测 conda 环境路径
+if [ -n "$CONDA_PREFIX" ] && [ -d "$CONDA_PREFIX/lib" ]; then
+    export LD_LIBRARY_PATH="$PWD/.venv/lib:$CONDA_PREFIX/lib:$LD_LIBRARY_PATH"
+else
+    export LD_LIBRARY_PATH="$PWD/.venv/lib:$LD_LIBRARY_PATH"
+fi
 
 echo ""
 echo "GPU node allocated. Starting pipeline..."

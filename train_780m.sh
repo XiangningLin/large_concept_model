@@ -9,16 +9,17 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR"
 
-# 使用大空间目录存储数据和检查点
-export DATA_DIR="/work/hdd/bfaq/jlyu3/lcm/processed_data/tom_tracking_data"
-export CHECKPOINT_DIR="/work/hdd/bfaq/jlyu3/lcm/checkpoints/tom_tracking_780M_2gpu"
-export EXPERIMENT_NAME="tom_tracking_780M_2gpu"
+# 使用大空间目录存储数据和检查点（如果未设置，使用项目目录）
+# 允许通过环境变量覆盖这些路径
+export DATA_DIR="${DATA_DIR:-$PROJECT_ROOT/output/processed_data/tom_tracking_data}"
+export CHECKPOINT_DIR="${CHECKPOINT_DIR:-$PROJECT_ROOT/checkpoints/tom_tracking_780M_2gpu}"
+export EXPERIMENT_NAME="${EXPERIMENT_NAME:-tom_tracking_780M_2gpu}"
 
-# 设置环境变量 - 使用大空间目录
-export UV_CACHE_DIR=/work/hdd/bfaq/jlyu3/lcm/uv_cache
-export HF_HOME=/work/hdd/bfaq/jlyu3/lcm/hf_cache
-export HF_DATASETS_CACHE=/work/hdd/bfaq/jlyu3/lcm/hf_cache/datasets
-export TMPDIR=/work/hdd/bfaq/jlyu3/lcm/tmp
+# 设置环境变量 - 如果未设置，使用项目目录下的临时目录
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$PROJECT_ROOT/.cache/uv_cache}"
+export HF_HOME="${HF_HOME:-$PROJECT_ROOT/.cache/hf_cache}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$PROJECT_ROOT/.cache/hf_cache/datasets}"
+export TMPDIR="${TMPDIR:-$PROJECT_ROOT/tmp}"
 # ========================================================
 
 cd "$PROJECT_ROOT"

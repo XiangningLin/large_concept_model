@@ -109,15 +109,17 @@ fi
 echo "✓ 数据目录存在"
 echo ""
 
-# 设置环境变量 - 使用大空间目录
-export UV_CACHE_DIR=/work/hdd/bfaq/jlyu3/lcm/uv_cache
-export TMPDIR=/work/hdd/bfaq/jlyu3/lcm/tmp
+# 设置环境变量 - 如果未设置，使用项目目录下的临时目录
+# 允许通过环境变量覆盖这些路径
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$SCRIPT_DIR/.cache/uv_cache}"
+export TMPDIR="${TMPDIR:-$SCRIPT_DIR/tmp}"
 
-mkdir -p $TMPDIR $OUTPUT_DIR
+mkdir -p "$TMPDIR" "$OUTPUT_DIR"
 
 # 启动训练
 echo "🚀 启动训练..."
 echo ""
+# TODO: add trainer, finetune, pretrain, ..., then remove +
 CUDA_VISIBLE_DEVICES=$GPU_LIST .venv/bin/python -m torch.distributed.run \
     --standalone \
     --nnodes=1 \

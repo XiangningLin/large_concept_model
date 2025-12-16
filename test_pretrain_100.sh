@@ -15,12 +15,12 @@ echo "训练步数: 20步（测试用）"
 echo "输出: checkpoints/test_lcm_780m_100"
 echo "==========================================="
 
-# 设置环境变量 - 使用大空间目录
-export UV_CACHE_DIR=/work/hdd/bfaq/jlyu3/lcm/uv_cache
-export HF_HOME=/work/hdd/bfaq/jlyu3/lcm/hf_cache
-export HF_DATASETS_CACHE=/work/hdd/bfaq/jlyu3/lcm/hf_cache/datasets
-export TMPDIR=/work/hdd/bfaq/jlyu3/lcm/tmp
-mkdir -p $TMPDIR
+# 设置环境变量 - 如果未设置，使用项目目录下的临时目录
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$SCRIPT_DIR/.cache/uv_cache}"
+export HF_HOME="${HF_HOME:-$SCRIPT_DIR/.cache/hf_cache}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-$SCRIPT_DIR/.cache/hf_cache/datasets}"
+export TMPDIR="${TMPDIR:-$SCRIPT_DIR/tmp}"
+mkdir -p "$TMPDIR"
 
 # 创建输出目录
 mkdir -p checkpoints/test_lcm_780m_100

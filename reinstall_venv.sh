@@ -2,7 +2,9 @@
 # 重新安装虚拟环境的脚本
 set -e
 
-PROJECT_ROOT="/work/nvme/bfaq/xlin5/large_concept_model"
+# 自动检测项目根目录（脚本所在目录）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR"
 cd "$PROJECT_ROOT"
 
 echo "=========================================="
