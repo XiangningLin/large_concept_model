@@ -1,6 +1,9 @@
 defaults:
   - launcher: submitit
   - requirements@trainer
+  - pretrain: null  # 可选：使用 +pretrain=xxx 来选择
+  - finetune: null  # 可选：使用 +finetune=xxx 来选择
+  - post_training: null  # 可选：使用 +post_training=xxx 来选择
   - _self_
 dry_run: false
 trainer:

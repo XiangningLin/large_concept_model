@@ -61,9 +61,13 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "可用模型配置 (--model):"
             echo "  Base LCM:"
+            echo "    - mse_130M       : Base LCM 130M"
+            echo "    - mse_370M       : Base LCM 370M"
             echo "    - mse_780M       : Base LCM 780M (默认)"
             echo "    - mse            : Base LCM 1.6B"
             echo "  Two-Tower Diffusion LCM:"
+            echo "    - two_tower_130M : Two-Tower Diffusion LCM 130M"
+            echo "    - two_tower_370M : Two-Tower Diffusion LCM 370M"
             echo "    - two_tower_780M : Two-Tower Diffusion LCM 780M"
             echo "    - two_tower      : Two-Tower Diffusion LCM 1.6B"
             echo ""
@@ -119,14 +123,13 @@ mkdir -p "$TMPDIR" "$OUTPUT_DIR"
 # 启动训练
 echo "🚀 启动训练..."
 echo ""
-# TODO: add trainer, finetune, pretrain, ..., then remove +
 CUDA_VISIBLE_DEVICES=$GPU_LIST .venv/bin/python -m torch.distributed.run \
     --standalone \
     --nnodes=1 \
     --nproc-per-node=$NUM_GPUS \
     -m lcm.train \
     launcher=standalone \
-    +pretrain=$MODEL_CONFIG \
+    pretrain=$MODEL_CONFIG \
     ++trainer.output_dir=$OUTPUT_DIR \
     ++trainer.experiment_name=$EXPERIMENT_NAME \
     ++trainer.data_loading_config.max_tokens=$MAX_TOKENS \
