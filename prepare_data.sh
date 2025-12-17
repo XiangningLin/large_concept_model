@@ -14,12 +14,17 @@ NUM_GPUS=2
 NUM_SAMPLES=2000  # 约10B tokens，设置为 "all" 或 "None" 表示处理整个数据集
 OUTPUT_DIR="output/fine_web"
 BATCH_SIZE=20
+START_INDEX=0  # 全局起始索引，每个 GPU 会在此基础上计算自己的 start_index
 
 # prepare_fine_web 参数的默认值
 MAX_SENTENCE_LENGTH=256
 ADD_SPLIT_COLUMN=True
 TRAIN_RATIO=0.8
 SEED=42
+CHECKPOINT_INTERVAL=5000
+USE_WANDB=False
+WANDB_PROJECT="lcm_data_preparation"
+WANDB_RUN_NAME=""  # 空字符串表示使用默认（自动生成）
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -38,6 +43,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --output_dir=*)
             OUTPUT_DIR="${1#*=}"
+            shift
+            ;;
+        --start_index=*)
+            START_INDEX="${1#*=}"
             shift
             ;;
         --batch_size=*)
@@ -60,10 +69,27 @@ while [[ $# -gt 0 ]]; do
             SEED="${1#*=}"
             shift
             ;;
+        --checkpoint_interval=*)
+            CHECKPOINT_INTERVAL="${1#*=}"
+            shift
+            ;;
+        --use_wandb=*)
+            USE_WANDB="${1#*=}"
+            shift
+            ;;
+        --wandb_project=*)
+            WANDB_PROJECT="${1#*=}"
+            shift
+            ;;
+        --wandb_run_name=*)
+            WANDB_RUN_NAME="${1#*=}"
+            shift
+            ;;
         *)
             echo "未知参数: $1"
-            echo "用法: $0 --num_gpus=N [--num_samples=M] [--output_dir=PATH] [--batch_size=B]"
+            echo "用法: $0 --num_gpus=N [--num_samples=M] [--output_dir=PATH] [--start_index=IDX] [--batch_size=B]"
             echo "     [--max_sentence_length=LEN] [--add_split_column=BOOL] [--train_ratio=RATIO] [--seed=SEED]"
+            echo "     [--checkpoint_interval=INT] [--use_wandb=BOOL] [--wandb_project=STR] [--wandb_run_name=STR]"
             exit 1
             ;;
     esac
@@ -89,11 +115,22 @@ else
     echo "每GPU样本: $SAMPLES_PER_GPU"
 fi
 echo "输出目录: $OUTPUT_DIR"
+echo "全局起始索引: $START_INDEX"
 echo "批次大小: $BATCH_SIZE"
 echo "最大句子长度: $MAX_SENTENCE_LENGTH"
 echo "添加split列: $ADD_SPLIT_COLUMN"
 echo "训练集比例: $TRAIN_RATIO"
 echo "随机种子: $SEED"
+echo "检查点间隔: $CHECKPOINT_INTERVAL"
+if [ "$USE_WANDB" = "True" ] || [ "$USE_WANDB" = "true" ]; then
+    echo "WandB 监控: 启用"
+    echo "WandB 项目: $WANDB_PROJECT"
+    if [ -n "$WANDB_RUN_NAME" ]; then
+        echo "WandB Run 名称: $WANDB_RUN_NAME"
+    fi
+else
+    echo "WandB 监控: 禁用"
+fi
 echo "======================================"
 echo ""
 
@@ -116,15 +153,15 @@ echo "🔍 [调试] NUM_GPUS=$NUM_GPUS, 循环范围: seq 0 $((NUM_GPUS - 1))"
 for i in $(seq 0 $((NUM_GPUS - 1))); do
     echo "🔍 [调试] 循环迭代: i=$i"
     
-    # 计算 start_index
+    # 计算每个 GPU 的 start_index（基于全局起始索引）
     if [ "$NUM_SAMPLES" = "all" ]; then
         # 处理整个数据集时，每个GPU处理不同的数据段
         # 使用一个大的步长来避免重叠（假设数据集很大，每个GPU处理不同的部分）
         # 这里使用一个固定的大步长，实际使用时可能需要根据数据集大小调整
-        START_IDX=$((i * 1000000))  # 每个GPU间隔100万条数据
+        START_IDX=$((START_INDEX + i * 1000000))  # 每个GPU间隔100万条数据
         echo "  GPU $i: 从索引 $START_IDX 开始处理（处理整个数据集）"
     else
-        START_IDX=$((i * SAMPLES_PER_GPU))
+        START_IDX=$((START_INDEX + i * SAMPLES_PER_GPU))
         echo "  GPU $i: 样本 $START_IDX - $((START_IDX + SAMPLES_PER_GPU))"
     fi
     
@@ -143,6 +180,15 @@ for i in $(seq 0 $((NUM_GPUS - 1))); do
         NUM_SAMPLES_ARG="$SAMPLES_PER_GPU"
     fi
     
+    # 构建 wandb_run_name 参数（如果指定了，为每个 GPU 添加后缀）
+    WANDB_ARGS=""
+    if [ "$USE_WANDB" = "True" ] || [ "$USE_WANDB" = "true" ]; then
+        WANDB_ARGS="--use_wandb=$USE_WANDB --wandb_project=$WANDB_PROJECT"
+        if [ -n "$WANDB_RUN_NAME" ]; then
+            WANDB_ARGS="$WANDB_ARGS --wandb_run_name=${WANDB_RUN_NAME}_gpu${i}"
+        fi
+    fi
+    
     MAX_SENTENCE_LENGTH=$MAX_SENTENCE_LENGTH \
     ADD_SPLIT_COLUMN=$ADD_SPLIT_COLUMN \
     TRAIN_RATIO=$TRAIN_RATIO \
@@ -152,6 +198,8 @@ for i in $(seq 0 $((NUM_GPUS - 1))); do
         --num_samples=$NUM_SAMPLES_ARG \
         --start_index=$START_IDX \
         --batch_size=$BATCH_SIZE \
+        --checkpoint_interval=$CHECKPOINT_INTERVAL \
+        $WANDB_ARGS \
         > logs/prepare_gpu${i}.log 2>&1 &
     
     echo "  PID: $!"

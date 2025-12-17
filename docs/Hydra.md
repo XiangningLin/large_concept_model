@@ -2,6 +2,12 @@
 
 ## Hydra的调用端：
 
+0. Scale 所用的checkpoints数量（近似，每个checkpoint 5000 samples）：
+
+130M --> 506 checkpoints
+370M --> 1441 checkpoints
+780M --> 3036 checkpoints
+
 1. 模型的训练入口：
 
 在 `lcm/train/__main__.py`里面：
@@ -107,13 +113,15 @@ if __name__ == "__main__":
 ```sh
 bash prepare_data.sh \
     --num_gpus=4 \
+    -- start_index=0 \
     --num_samples=20000 \
     --output_dir=output/fine_web \
     --batch_size=20 \
     --max_sentence_length=512 \
     --add_split_column=True \
     --train_ratio=0.8 \
-    --seed=42
+    --seed=42 \
+    --use_wandb=true
 ```
 
 在完成prepare data之后，我们还要更新datacard。脚本中自动处理了这个过程。

@@ -18,6 +18,7 @@ import sys
 import json
 import signal
 import atexit
+from typing import Optional
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -28,6 +29,12 @@ from sonar.inference_pipelines.text import TextToEmbeddingModelPipeline
 from sentence_splitter import SentenceSplitter
 from stopes.utils.arrow_utils import nested_numpy_to_pyarrow
 from timer import DistributedTimer
+
+try:
+    import wandb
+    has_wandb = True
+except ImportError:
+    has_wandb = False
 
 # we use s3 as our dataset key, but we actually don't have s3, it is just a placeholder
 DATASET_NAME = "fine_web_edu"
@@ -42,21 +49,29 @@ def prepare_fine_web(
     add_split_column: bool = True,
     train_ratio: float = 0.8,
     seed: int = 42,
-    checkpoint_interval: int = 500,  # 每处理多少个样本保存一个检查点文件
+    checkpoint_interval: int = 5000,  # 每处理多少个样本保存一个检查点文件
+    use_wandb: bool = False,  # 是否启用 wandb 监控
+    wandb_project: str = "lcm_data_preparation",  # wandb 项目名
+    wandb_run_name: Optional[str] = None,  # wandb run 名称，None 则自动生成
 ):
     """
     流式处理fine web数据集
     
     参数:
         output_dir: 输出目录
-        num_samples: 要处理的样本数量，None 表示处理整个数据集（默认: 100）
-        start_index: 起始索引（用于多GPU并行）
+        num_samples: 从 start_index 开始要处理的样本数量，None 表示处理整个数据集
+                    终止点为 start_index + num_samples（在数据集索引空间中）
+        start_index: 数据集中的起始索引，从第 start_index 个样本开始处理（默认: 0）
         batch_size: 批处理大小（用于SONAR编码）
         max_sentence_length: 最大句子长度
         add_split_column: 是否添加 split 列用于 train/validation 分区（默认: True）
         train_ratio: 训练数据比例，当 add_split_column=True 时使用（默认: 0.8，即 80% 训练，20% 验证）
         seed: 随机种子，用于 split 的可重现性（默认: 42）
         checkpoint_interval: 每处理多少个样本保存一个检查点文件（默认: 50000）
+        
+    注意:
+        - 如果从 start_index 到 start_index + num_samples 之间有空样本（空文本或无法分句），
+          实际处理的有效样本数可能少于 num_samples，但会处理到索引 start_index + num_samples 为止
     
     使用示例:
         # 100条样本（5-10分钟）
@@ -92,6 +107,9 @@ def prepare_fine_web(
             train_ratio=train_ratio,
             seed=seed,
             checkpoint_interval=checkpoint_interval,
+            use_wandb=use_wandb,
+            wandb_project=wandb_project,
+            wandb_run_name=wandb_run_name,
         )
     finally:
         timer.stop()
@@ -107,6 +125,9 @@ def _prepare_fine_web_impl(
     train_ratio: float = 0.8,
     seed: int = 42,
     checkpoint_interval: int = 50000,  # 每处理多少个样本保存一个检查点文件
+    use_wandb: bool = False,
+    wandb_project: str = "lcm_data_preparation",
+    wandb_run_name: Optional[str] = None,
 ):
     # 验证 checkpoint_interval
     if checkpoint_interval <= 0:
@@ -232,6 +253,34 @@ def _prepare_fine_web_impl(
         print("⚠️  未检测到GPU，使用CPU（会很慢）")
         device = torch.device("cpu")
     
+    # 初始化 wandb（如果启用）
+    wandb_run = None
+    if use_wandb:
+        if not has_wandb:
+            print("⚠️  wandb 未安装，跳过 wandb 监控")
+        else:
+            if wandb_run_name is None:
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                wandb_run_name = f"prepare_fine_web_{Path(output_dir).name}_{timestamp}"
+            
+            wandb_run = wandb.init(
+                project=wandb_project,
+                name=wandb_run_name,
+                dir=output_path / "wandb",
+                resume="allow",
+                config={
+                    "start_index": original_start_index,
+                    "num_samples": original_num_samples if not process_all else None,
+                    "process_all": process_all,
+                    "batch_size": batch_size,
+                    "max_sentence_length": max_sentence_length,
+                    "checkpoint_interval": checkpoint_interval,
+                    "output_dir": str(output_dir),
+                },
+            )
+            print(f"✅ WandB 监控已启用: {wandb_project}/{wandb_run_name}")
+    
     print("\n🔄 初始化模型...")
     
     # 初始化句子分割器
@@ -250,7 +299,7 @@ def _prepare_fine_web_impl(
     if process_all:
         print(f"📥 开始流式下载fine web数据（处理整个数据集）...")
     else:
-        print(f"📥 开始流式下载fine web数据 (前 {num_samples} 条)...")
+        print(f"📥 开始流式下载fine web数据 (从索引 {start_index} 开始，处理 {num_samples} 条)...")
     print("   (这是真正的流式，只下载需要的数据)\n")
     
     dataset = load_dataset(
@@ -389,8 +438,6 @@ def _prepare_fine_web_impl(
             for i, (start, length) in enumerate(doc_offsets):
                 if length == 0:
                     continue
-                if not process_all and processed >= num_samples:
-                    break
 
                 emb_numpy = flat_embeddings[start:start + length].numpy()
                 dataset_idx = batch_originals[i].get('dataset_index', start_index + processed)
@@ -410,9 +457,23 @@ def _prepare_fine_web_impl(
                     save_checkpoint(current_checkpoint_data, next_checkpoint_number)
                     current_checkpoint_data = []
                     next_checkpoint_number += 1
+                    # 检查点保存时记录进度
+                    if wandb_run is not None:
+                        log_dict = {"progress/processed_samples": processed}
+                        if not process_all:
+                            percentage = (processed / num_samples) * 100
+                            log_dict["progress/percentage"] = percentage
+                        wandb_run.log(log_dict, step=processed, commit=True)
 
                 if processed % 100 == 0:
                     save_metadata()
+                    # 记录进度到 wandb
+                    if wandb_run is not None:
+                        log_dict = {"progress/processed_samples": processed}
+                        if not process_all:
+                            percentage = (processed / num_samples) * 100
+                            log_dict["progress/percentage"] = percentage
+                        wandb_run.log(log_dict, step=processed)
 
         batch_texts = []
         batch_originals = []
@@ -421,8 +482,8 @@ def _prepare_fine_web_impl(
             # 跳过start_index之前的样本
             if idx < start_index:
                 continue
-            # 如果不是处理全部数据，检查是否达到目标数量
-            if not process_all and processed >= num_samples:
+            # 如果不是处理全部数据，检查是否达到终止点（start_index + num_samples）
+            if not process_all and idx >= start_index + num_samples:
                 break
             
             text = sample['text'].strip()
@@ -453,18 +514,9 @@ def _prepare_fine_web_impl(
                 batch_originals = []
         
         # 处理剩余的数据（也使用批处理）
-        if batch_texts and (process_all or processed < num_samples):
-                if not process_all:
-                    remaining_needed = num_samples - processed
-                    if remaining_needed <= 0:
-                        batch_texts = []
-                        batch_originals = []
-                    else:
-                        batch_texts = batch_texts[:remaining_needed]
-                        batch_originals = batch_originals[:remaining_needed]
-                
-                if batch_texts:
-                    _encode_batch(batch_texts, batch_originals)
+        # 注意：循环可能因为达到终止点而结束，此时 batch_texts 中的样本索引都在有效范围内
+        if batch_texts:
+            _encode_batch(batch_texts, batch_originals)
     
     # 处理剩余的检查点数据
     if current_checkpoint_data:
@@ -489,6 +541,15 @@ def _prepare_fine_web_impl(
     
     # 更新并保存 metadata
     save_metadata()
+    
+    # 记录最终进度到 wandb
+    if wandb_run is not None:
+        log_dict = {"progress/processed_samples": processed}
+        if not process_all:
+            percentage = (processed / num_samples) * 100
+            log_dict["progress/percentage"] = percentage
+        wandb_run.log(log_dict, step=processed, commit=True)
+        wandb_run.finish()
     
     print("\n" + "=" * 80)
     print("✅ 处理完成！")
