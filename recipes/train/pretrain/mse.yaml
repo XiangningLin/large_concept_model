@@ -18,7 +18,13 @@ use_fsdp: true
 fsdp_fp32_reduce: true
 
 lr: 0.0004
-lr_schedule: cosine
+lr_schedule: wsd
+lr_stage_ratios:
+  - 0.1   # warmup  = 10%
+  - 0.8   # stable  = 40%
+  - 0.1   # decay   = 50%
+start_lr: 1e-7
+final_lr: 1e-5
 num_lr_warmup_steps: 10_000
 max_steps: 250_000
 gradient_accumulation: 1
@@ -68,3 +74,23 @@ requirements:
   cpus_per_task: 32
   mem_gb: 0
   timeout_min: 10000
+
+# ── Training mode ──
+training_mode: "pretrain"
+
+# ── WandB resume ──
+wandb_run_id: null  # Set to a WandB run ID to resume logging to same run
+
+# ── Token milestones (optional) ──
+# checkpoint_milestones:
+#   - 1000000000
+#   - 5000000000
+#   - 10000000000
+tokens_per_sentence: 18.5
+
+# ── HuggingFace Hub (optional) ──
+hf_repo_id: null
+hf_token: null
+hf_checkpoint_subfolder: null
+hf_checkpoint_filename: null
+hf_checkpoint_save_subfolder: null

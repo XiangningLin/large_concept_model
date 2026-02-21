@@ -20,6 +20,36 @@ def toy_base_lcm() -> BaseLCModelConfig:
     )
 
 
+@lcm_arch("base_lcm_60M")
+def base_lcm_60M() -> BaseLCModelConfig:
+    """Base 60M model
+    Approximate Parameter Size: ~62M
+    Configuration: model_dim=640, num_layers=12, num_heads=8
+    """
+    model_dim: int = 640
+    num_attn_heads: int = 8
+    return BaseLCModelConfig(
+        max_seq_len=4096,
+        model_dim=model_dim,
+        sonar_embed_dim=1024,
+        sonar_normalizer_name="dummy_sonar_normalizer",
+        frontend=LCMFrontendConfig(),
+        lcm=TransformerConfig(
+            final_dropout_p=0.0,
+            attention_dropout_p=0.0,
+            dropout_p=0.1,
+            mha_output_proj_bias=True,
+            ffn_inner_dim=model_dim * 4,  # 2560
+            num_attn_heads=num_attn_heads,
+            num_layers=12,
+            pos_embedding_style="rope",
+            use_swiglu=True,
+            layer_normalization_style="rms",
+        ),
+        postnet=ProjectionConfig(),
+    )
+
+
 @lcm_arch("base_lcm_780M")
 def base_lcm_780M() -> BaseLCModelConfig:
     """Base 780M model
@@ -100,6 +130,36 @@ def base_lcm_130M() -> BaseLCModelConfig:
             ffn_inner_dim=model_dim * 4,  # 3072
             num_attn_heads=num_attn_heads,
             num_layers=18,
+            pos_embedding_style="rope",
+            use_swiglu=True,
+            layer_normalization_style="rms",
+        ),
+        postnet=ProjectionConfig(),
+    )
+
+
+@lcm_arch("base_lcm_250M")
+def base_lcm_250M() -> BaseLCModelConfig:
+    """Base 250M model
+    Approximate Parameter Size: ~246M
+    Configuration: model_dim=1024, num_layers=19, num_heads=16
+    """
+    model_dim: int = 1024
+    num_attn_heads: int = 16
+    return BaseLCModelConfig(
+        max_seq_len=4096,
+        model_dim=model_dim,
+        sonar_embed_dim=1024,
+        sonar_normalizer_name="dummy_sonar_normalizer",
+        frontend=LCMFrontendConfig(),
+        lcm=TransformerConfig(
+            final_dropout_p=0.0,
+            attention_dropout_p=0.0,
+            dropout_p=0.1,
+            mha_output_proj_bias=True,
+            ffn_inner_dim=model_dim * 4,  # 4096
+            num_attn_heads=num_attn_heads,
+            num_layers=19,
             pos_embedding_style="rope",
             use_swiglu=True,
             layer_normalization_style="rms",

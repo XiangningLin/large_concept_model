@@ -1,5 +1,0 @@
-__source__: inproc
-checkpoint: file:///gpfs/projects/p32721/large_concept_model/checkpoints/lcm_370m_tom_tracking/checkpoints/step_2000/model.pt
-model_arch: base_lcm_370M
-model_family: base_lcm
-name: on_the_fly_lcm

@@ -1,7 +1,8 @@
 name: "pretraining_data"
 parquet_path:
   # s3: "output/c4_100_stream"
-  s3: "output/fine_web"
+  # s3: "output/fine_web"
+  s3: "output/fine_web_test"
 source_column: "text_sentences_sonar_emb"
 source_text_column: "text_sentences"
 ---
@@ -29,7 +30,7 @@ target_text_column: "reference_output_sentences"
 ---
 name: "fine_web_edu"
 parquet_path:
-  s3: "output/fine_web_test"
+  local: "/work/hdd/bfaq/jlyu3/lcm/preprocessed_data"
 source_column: "text_sentences_sonar_emb"
 source_text_column: "text_sentences"
 # partition columns:

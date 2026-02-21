@@ -16,6 +16,16 @@ if "HF_DATASETS_CACHE" not in os.environ:
 from pathlib import Path
 import sys
 import json
+
+# Ensure project root is in path for scripts.utils import
+_project_root = Path(__file__).resolve().parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+from scripts.utils.preprocess_filter_utils import (
+    normalize_unicode_punctuation,
+    drop_text_with_unk_tokens,
+)
 import signal
 import atexit
 import torch
@@ -41,7 +51,8 @@ def prepare_fine_web(
     add_split_column: bool = True,
     train_ratio: float = 0.8,
     seed: int = 42,
-    checkpoint_interval: int = 50000,  # 每处理多少个样本保存一个检查点文件
+    checkpoint_interval: int = 1000,  # 每处理多少个样本保存一个检查点文件
+    enable_unk_filter: bool = True,  # 是否过滤含 UNK 的句子（需加载 tokenizer）
 ):
     """
     流式处理fine web数据集
@@ -56,6 +67,7 @@ def prepare_fine_web(
         train_ratio: 训练数据比例，当 add_split_column=True 时使用（默认: 0.8，即 80% 训练，20% 验证）
         seed: 随机种子，用于 split 的可重现性（默认: 42）
         checkpoint_interval: 每处理多少个样本保存一个检查点文件（默认: 1000）。设置为 0 或负数可禁用检查点
+        enable_unk_filter: 是否过滤含 SONAR UNK token 的句子（默认: True）。为 False 时跳过 UNK 过滤，保持向后兼容
     
     使用示例:
         # 100条样本（5-10分钟）
@@ -317,6 +329,12 @@ def prepare_fine_web(
         tokenizer="text_sonar_basic_encoder",
         device=device
     )
+
+    # 加载 SONAR tokenizer 用于 UNK 过滤（与 decoder 一致）
+    tokenizer = None
+    if enable_unk_filter:
+        from sonar.models.sonar_text import load_sonar_tokenizer
+        tokenizer = load_sonar_tokenizer("text_sonar_basic_encoder", progress=False)
     print("✅ 模型加载完成\n")
     
     # 流式加载fine web数据集
@@ -327,10 +345,10 @@ def prepare_fine_web(
     print("   (这是真正的流式，只下载需要的数据)\n")
     
     dataset = load_dataset(
-        "HuggingFaceFW/fineweb-edu",
-        "sample-10BT",
+        "LGVamper/fineweb-edu-20B",
         split="train",
-        streaming=True  # 🔥 流式下载！
+        streaming=True,  # 🔥 流式下载！
+        token = os.getenv("HF_TOKEN")
     )
     
     # 收集处理后的数据
@@ -455,16 +473,34 @@ def prepare_fine_web(
             if not text:
                 last_processed_index = idx  # 记录索引，即使跳过了
                 continue
-            
+
+            # Unicode 标点归一化（与 SentenceSSM 一致）
+            text = normalize_unicode_punctuation(text)
+            if not text.strip():
+                last_processed_index = idx
+                continue
+
             # 分句
             sentences = splitter.split(text)
             if not sentences:
                 last_processed_index = idx  # 记录索引，即使跳过了
                 continue
-            
+
             # 截断过长的句子
-            sentences = [s[:max_sentence_length] for s in sentences]
-            
+            sentences = [s.strip()[:max_sentence_length] for s in sentences if s.strip()]
+
+            # 过滤含 UNK 的句子（当 tokenizer 可用时）
+            if tokenizer is not None:
+                filtered = []
+                for s in sentences:
+                    if s and drop_text_with_unk_tokens(s, tokenizer) is not None:
+                        filtered.append(s)
+                sentences = filtered
+
+            if not sentences:
+                last_processed_index = idx
+                continue
+
             batch_texts.append(sentences)
             batch_originals.append({
                 'url': sample.get('url', ''),
@@ -523,6 +559,7 @@ def prepare_fine_web(
                             # 达到检查点间隔，保存检查点
                             if len(current_checkpoint_data) >= checkpoint_interval:
                                 save_checkpoint(current_checkpoint_data, next_checkpoint_number)
+                                save_metadata()  # 与checkpoint同步保存metadata
                                 # 将检查点数据添加到 all_data（用于最终合并）
                                 all_data.extend(current_checkpoint_data)
                                 current_checkpoint_data = []  # 清空当前检查点
@@ -530,10 +567,6 @@ def prepare_fine_web(
                         else:
                             # 未启用检查点，直接添加到 all_data
                             all_data.append(sample_data)
-                        
-                        # 每处理 100 个样本保存一次 metadata（防止意外中断丢失进度）
-                        if processed % 100 == 0:
-                            save_metadata()
                         
                     except Exception as e:
                         print(f"\n⚠️  Processing failed: {str(e)}")
@@ -586,6 +619,7 @@ def prepare_fine_web(
                         # 达到检查点间隔，保存检查点
                         if len(current_checkpoint_data) >= checkpoint_interval:
                             save_checkpoint(current_checkpoint_data, next_checkpoint_number)
+                            save_metadata()  # 与checkpoint同步保存metadata
                             # 将检查点数据添加到 all_data（用于最终合并）
                             all_data.extend(current_checkpoint_data)
                             current_checkpoint_data = []  # 清空当前检查点
@@ -593,10 +627,6 @@ def prepare_fine_web(
                     else:
                         # 未启用检查点，直接添加到 all_data
                         all_data.append(sample_data)
-                    
-                    # 每处理 100 个样本保存一次 metadata（防止意外中断丢失进度）
-                    if processed % 100 == 0:
-                        save_metadata()
                     
                 except Exception as e:
                     print(f"\n⚠️  Processing failed: {str(e)}")
@@ -606,6 +636,7 @@ def prepare_fine_web(
     if use_checkpoints and current_checkpoint_data:
         print(f"\n💾 保存最后一个检查点（剩余 {len(current_checkpoint_data)} 个样本）...")
         save_checkpoint(current_checkpoint_data, next_checkpoint_number)
+        save_metadata()  # 与checkpoint同步保存metadata
         all_data.extend(current_checkpoint_data)
         current_checkpoint_data = []
         next_checkpoint_number += 1

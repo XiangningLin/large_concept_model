@@ -18,7 +18,7 @@ export TMPDIR=/work/hdd/bfaq/jlyu3/lcm/tmp
 
 # Hugging Face Token (如果需要访问私有数据集)
 # 如果环境变量中已有，则使用环境变量；否则使用默认值
-# TODO: set your huggingface token 
+# TODO: set your huggingface token
 
 # 设置 Python 无缓冲输出
 export PYTHONUNBUFFERED=1
@@ -82,4 +82,3 @@ echo "=========================================="
 echo "✅ 数据准备任务完成"
 echo "时间: $(date)"
 echo "=========================================="
-

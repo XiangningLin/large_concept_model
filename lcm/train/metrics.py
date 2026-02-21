@@ -343,6 +343,7 @@ class LCMWandBRecorder(MetricRecorder):
         name: Optional[str] = None,
         output_dir: Optional[Path] = None,
         config: Dict[str, Any] = {},
+        id: Optional[str] = None,
         **kwargs,
     ) -> None:
         """
@@ -350,6 +351,7 @@ class LCMWandBRecorder(MetricRecorder):
         :param name: A unique name for your run, if none is given, a random name will be generated
         :param output_dir: The base directory under which to store the W&B files. You don't have to provide this.
         :param config: A dictionary of key-value pairs to be stored as the experiment's config. (akin to hparams in tb)
+        :param id: An existing WandB run ID to resume. If None, a new run is created.
         :param kwargs: Additional arguments to pass to wandb.init()
 
         In order to use W&B, run `wandb login` from the command line and enter
@@ -368,6 +370,7 @@ class LCMWandBRecorder(MetricRecorder):
                 name=name,
                 dir=output_dir,
                 resume="allow",
+                id=id,
                 config=config,
                 **kwargs,
             )

@@ -23,6 +23,7 @@ from typing import (
     Literal,
     Mapping,
     Optional,
+    Set,
     Tuple,
 )
 
@@ -76,6 +77,7 @@ from lcm.train.metrics import (
 )
 from lcm.train.optim import build_lr_scheduler
 from lcm.utils.data_utils import update_dataclass
+from lcm.utils.hf_upload import upload_checkpoint_to_hf
 from lcm.utils.distributed import (
     SUPPORTED_FSDP_MEMORY_POLICIES,
     SUPPORTED_FSDP_WRAP_POLICIES,
@@ -127,6 +129,9 @@ class TrainingConfig:
     wandb_project: Optional[str] = None
     wandb_run_name: Optional[str] = None
     wandb_entity: Optional[str] = None
+    wandb_run_id: Optional[str] = None
+    """WandB run ID for resuming a previous run.
+    Set this to continue logging to the same run after a restart or decay phase."""
 
     requirements: Requirements = field(
         default_factory=lambda: Requirements(
@@ -296,6 +301,58 @@ class TrainingConfig:
         4. ffn-adaln: all FFN and Adaln sub-modules will be frozen.
     """
 
+    # check
+    # ── Token milestone checkpoint ──────────────────────────────────────
+    checkpoint_milestones: Optional[List[int]] = None
+    """Token milestones at which to save additional checkpoints.
+    Each value is a cumulative token count (e.g., ``[1_000_000_000, 5_000_000_000]``).
+    Milestones are saved independently of ``checkpoint_every_n_steps``."""
+
+    tokens_per_sentence: float = 18.5
+    """Estimated raw sub-word tokens per SONAR sentence embedding.
+    Used to convert sentence counts to approximate token counts for milestone tracking."""
+
+    # check
+    # ── Decay-from-pretrain mode ────────────────────────────────────────
+    training_mode: str = "pretrain"
+    """Training mode. Supported values:
+    ``'pretrain'`` – standard pre-training (default),
+    ``'finetune'`` – fine-tuning from a registered model card,
+    ``'decay_from_pretrain'`` – load a pretrain checkpoint and run only the WSD decay phase."""
+
+    decay_ratio: float = 0.1
+    """Ratio of decay steps to pretrain total steps.
+    Only used when ``training_mode='decay_from_pretrain'``.
+    ``decay_steps = int(pretrain_total_steps * decay_ratio)``."""
+
+    pretrain_checkpoint_path: Optional[str] = None
+    """Path to the pretrain checkpoint directory (local).
+    Used in ``decay_from_pretrain`` mode if HF Hub is not configured."""
+
+    pretrain_total_steps: Optional[int] = None
+    """Total optimizer steps in the pretrain phase.
+    Required for ``decay_from_pretrain`` mode to compute ``decay_steps``."""
+
+    # ── HuggingFace Hub checkpoint management ───────────────────────────
+    hf_repo_id: Optional[str] = None
+    """HuggingFace Hub repository ID (e.g., ``'myorg/my-lcm-model'``).
+    When set, checkpoints are uploaded to and can be loaded from HF Hub."""
+
+    hf_token: Optional[str] = None
+    """HuggingFace API token. Falls back to ``HF_TOKEN`` env var if ``None``."""
+
+    hf_checkpoint_subfolder: Optional[str] = None
+    """Subfolder in the HF repo for loading checkpoints
+    (e.g., ``'lcm_1.6B_pretrain'``)."""
+
+    hf_checkpoint_filename: Optional[str] = None
+    """Specific checkpoint filename to load from HF Hub.
+    If ``None``, no remote checkpoint is loaded at startup."""
+
+    hf_checkpoint_save_subfolder: Optional[str] = None
+    """Subfolder in the HF repo for *saving* checkpoints.
+    Defaults to ``hf_checkpoint_subfolder`` if ``None``."""
+
 
 class Trainer(StatefulObjectBag):
     config: TrainingConfig
@@ -345,6 +402,7 @@ class Trainer(StatefulObjectBag):
         self.model = model
 
         self.training_data_loader = training_data_loader
+        self.register_stateful("training_data_loader", training_data_loader)
 
         # Skip saving and loading the state of validation dataloader
         self.register_non_stateful("validation_data_loader", validation_data_loader)
@@ -352,10 +410,16 @@ class Trainer(StatefulObjectBag):
         self.gang = gang
 
         self.rng_bag = rng_bag
+        self.register_stateful("rng_bag", rng_bag)
 
         self.step_nr = 1
 
         self.current_run_steps = 0
+
+        # check
+        # Token milestone tracking
+        self.total_tokens_seen: int = 0
+        self.saved_milestones: Set[int] = set()
 
         self.checkpoint_manager = checkpoint_manager
 
@@ -365,12 +429,21 @@ class Trainer(StatefulObjectBag):
 
         if gang.rank == 0:
             self.metric_recorders.append(TensorBoardRecorder(tb_dir))
+
+            # Auto-generate WandB run name if not provided
+            wandb_name = config.wandb_run_name
+            if wandb_name is None:
+                from datetime import datetime
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                wandb_name = f"lcm_{config.training_mode}_{ts}"
+
             self.metric_recorders.append(
                 LCMWandBRecorder(
-                    name=config.wandb_run_name,
+                    name=wandb_name,
                     project=config.wandb_project or "uncategorized",
                     output_dir=config.output_dir / "wandb",
                     config=self._tb_flat_config,
+                    id=config.wandb_run_id,
                 )
             )
 
@@ -413,6 +486,12 @@ class Trainer(StatefulObjectBag):
 
         self.setup_optimizer_and_lr_schedule()
 
+        # check
+        # ── Token milestone state (persisted across checkpoints) ──
+        self.register_non_stateful("_milestone_state", None)
+        # We manage total_tokens_seen and saved_milestones manually
+        # in state_dict / load_state_dict via _checkpoint metadata.
+
     def setup_optimizer_and_lr_schedule(self):
         optimizer = AdamW(
             self.model.parameters(),
@@ -446,15 +525,46 @@ class Trainer(StatefulObjectBag):
                 f"Initializing DynamicLossScaler with init_scale={self.config.loss_scaler_init_scale}"
             )
 
+        # check
+        # ── Compute effective LR schedule parameters ──
+        schedule = self.config.lr_schedule
+        max_steps = self.config.max_steps
+        warmup_steps = self.config.num_lr_warmup_steps
+        stage_ratio = tuple(self.config.lr_stage_ratios)
+
+        if self.config.training_mode == "decay_from_pretrain":
+            # Decay-only phase: override scheduler to WSD with 100% decay
+            assert self.config.pretrain_total_steps is not None, (
+                "pretrain_total_steps must be set for decay_from_pretrain mode"
+            )
+            decay_steps = int(self.config.pretrain_total_steps * self.config.decay_ratio
+                              / (1 - self.config.decay_ratio))
+            self.config.max_steps = decay_steps
+            max_steps = decay_steps
+
+            # Force WSD schedule with decay-only ratio
+            schedule = "wsd"
+            stage_ratio = (0.0, 0.0, 1.0)  # no warmup, no stable, all decay
+            # warmup_steps comes from config.num_lr_warmup_steps (user can set to 0 or small)
+
+            logger.info(
+                f"decay_from_pretrain mode: "
+                f"pretrain_total_steps={self.config.pretrain_total_steps}, "
+                f"decay_ratio={self.config.decay_ratio}, "
+                f"decay_steps (max_steps)={max_steps}, "
+                f"stage_ratio={stage_ratio}"
+            )
+
+        # check
         lr_scheduler = build_lr_scheduler(
             optimizer=self.optimizer,
-            schedule=self.config.lr_schedule,
+            schedule=schedule,
             lr=self.config.lr,
-            warmup_steps=self.config.num_lr_warmup_steps,
+            warmup_steps=warmup_steps,
             start_lr=self.config.start_lr,
             final_lr=self.config.final_lr,
-            max_steps=self.config.max_steps,
-            stage_ratio=tuple(self.config.lr_stage_ratios),
+            max_steps=max_steps,
+            stage_ratio=stage_ratio,
         )
 
         # Saving the lr_scheduler as well to properly resume training
@@ -604,6 +714,10 @@ class Trainer(StatefulObjectBag):
                     if self._should_checkpoint():
                         self._checkpoint()
 
+                    # check
+                    # ── Token milestone checkpoint ──
+                    self._check_token_milestones()
+
                     if self._should_validate():
                         self._validate()
 
@@ -641,6 +755,20 @@ class Trainer(StatefulObjectBag):
         logger.info("Training restored, resuming.")
 
         self.step_nr = step_nr + 1
+
+        # check
+        # Restore token milestone state from checkpoint metadata
+        try:
+            metadata = self.checkpoint_manager.load_metadata(step_nr)
+            if metadata is not None:
+                if "total_tokens_seen" in metadata:
+                    self.total_tokens_seen = metadata["total_tokens_seen"]
+                    logger.info(f"Restored total_tokens_seen={self.total_tokens_seen:,}")
+                if "saved_milestones" in metadata:
+                    self.saved_milestones = set(metadata["saved_milestones"])
+                    logger.info(f"Restored saved_milestones={self.saved_milestones}")
+        except Exception:
+            logger.warning("Could not restore milestone state from checkpoint metadata.")
 
     def _maybe_with_autocast(self) -> ContextManager[None]:
         # autocast is only needed if training with mixed precision.
@@ -750,6 +878,18 @@ class Trainer(StatefulObjectBag):
             if self.gang.rank == 0:
                 # update elapsed time once
                 self._train_step_time += step_stopwatch.get_elapsed_time()
+
+        # check
+        # ── Count tokens processed in this step (for milestone tracking) ──
+        step_sentences = 0
+        for batch in batches:
+            # LCM batches are EmbeddingsBatch with seqs shape [batch, seq_len, embed_dim]
+            if hasattr(batch, 'seqs') and batch.seqs is not None:
+                step_sentences += batch.seqs.shape[0] * batch.seqs.shape[1]
+            elif hasattr(batch, 'source_seqs') and batch.source_seqs is not None:
+                step_sentences += batch.source_seqs.shape[0] * batch.source_seqs.shape[1]
+        step_tokens = int(step_sentences * self.config.tokens_per_sentence * self.gang.size)
+        self.total_tokens_seen += step_tokens
 
         del batches
         return stepped
@@ -961,9 +1101,12 @@ class Trainer(StatefulObjectBag):
         logger.info(f"Saving checkpoint at step {self.step_nr}")
         checkpoint = self.state_dict()
 
+        # check
         metadata = {
             "config": self.config,
             "crash": crash,
+            "total_tokens_seen": self.total_tokens_seen,
+            "saved_milestones": list(self.saved_milestones),
         }
 
         self.checkpoint_manager.begin_checkpoint(self.step_nr)
@@ -1000,6 +1143,9 @@ class Trainer(StatefulObjectBag):
 
         logger.info(f"Checkpoint saved by worker @rank={self.gang.rank}")
 
+        # ── Upload to HuggingFace Hub ──
+        self._maybe_upload_checkpoint_to_hf(f"step_{self.step_nr}")
+
     def _save_consolidated_model(self) -> None:
         logger.info(f"Saving consolidated model at step {self.step_nr}.")
         self.checkpoint_manager.save_consolidated_fsdp_model(self.model)
@@ -1008,6 +1154,99 @@ class Trainer(StatefulObjectBag):
 
     def _should_do(self, n_step: int) -> bool:
         return self.step_nr % n_step == 0
+
+    # check
+    def _check_token_milestones(self) -> None:
+        """Check whether any token-count milestones have been reached and save
+        a dedicated checkpoint for each newly reached milestone."""
+        if not self.config.checkpoint_milestones:
+            return
+        for milestone in sorted(self.config.checkpoint_milestones):
+            if milestone not in self.saved_milestones and self.total_tokens_seen >= milestone:
+                logger.info(
+                    f"Token milestone {milestone:,} reached "
+                    f"(total_tokens_seen={self.total_tokens_seen:,}), "
+                    f"saving milestone checkpoint."
+                )
+                self._checkpoint_milestone(milestone)
+                self.saved_milestones.add(milestone)
+
+    # check
+    def _checkpoint_milestone(self, milestone: int) -> None:
+        """Save a milestone checkpoint.  Unlike regular ``_checkpoint()``, this
+        writes to a separate ``milestone_tokens_<N>`` directory and is *not*
+        subject to ``keep_last_n_checkpoints`` pruning."""
+        tag = f"milestone_tokens_{milestone}"
+        milestone_dir = self.config.output_dir / "milestones" / tag
+        milestone_dir.mkdir(parents=True, exist_ok=True)
+
+        # Re-use fairseq2 checkpoint manager for the milestone
+        from fairseq2.checkpoint import FileCheckpointManager as _FCM
+        milestone_mgr = _FCM(milestone_dir, self.gang)
+
+        checkpoint = self.state_dict()
+        metadata = {
+            "config": self.config,
+            "milestone": milestone,
+            "total_tokens_seen": self.total_tokens_seen,
+            "saved_milestones": list(self.saved_milestones | {milestone}),
+        }
+
+        milestone_mgr.begin_checkpoint(self.step_nr)
+
+        if self.is_fsdp:
+            replicated_keys = None
+        elif self.is_ddp:
+            replicated_keys = {"model", "optimizer"}
+        else:
+            replicated_keys = {"*"}
+
+        milestone_mgr.save_state(checkpoint, replicated_keys=replicated_keys)
+        milestone_mgr.save_metadata(metadata)
+
+        if self.is_fsdp:
+            milestone_mgr.save_consolidated_fsdp_model(self.model)
+
+        milestone_mgr.commit_checkpoint()
+
+        logger.info(f"Milestone checkpoint saved: {tag} (step={self.step_nr})")
+
+        # Upload milestone checkpoint to HF Hub
+        self._maybe_upload_checkpoint_to_hf(tag)
+
+    # check
+    def _maybe_upload_checkpoint_to_hf(self, tag: str) -> None:
+        """Upload checkpoint to HuggingFace Hub if configured (rank 0 only)."""
+        if self.gang.rank != 0:
+            return
+        if not self.config.hf_repo_id:
+            return
+
+        save_subfolder = (
+            self.config.hf_checkpoint_save_subfolder
+            or self.config.hf_checkpoint_subfolder
+            or "checkpoints"
+        )
+        path_in_repo = f"{save_subfolder}/{tag}"
+
+        # Determine the local dir that was just written
+        if tag.startswith("milestone_tokens_"):
+            checkpoint_dir = self.config.output_dir / "milestones" / tag
+        else:
+            checkpoint_dir = (
+                self.checkpoint_manager._checkpoint_dir / f"{tag}"
+            )
+
+        if not checkpoint_dir.exists():
+            logger.warning(f"Checkpoint dir {checkpoint_dir} not found, skipping HF upload.")
+            return
+
+        upload_checkpoint_to_hf(
+            checkpoint_dir=checkpoint_dir,
+            repo_id=self.config.hf_repo_id,
+            path_in_repo=path_in_repo,
+            token=self.config.hf_token,
+        )
 
     def create_model_card_for_last_checkpoint(
         self, is_final: bool = False, **card_kwargs

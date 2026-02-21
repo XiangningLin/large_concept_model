@@ -6,11 +6,12 @@
 
 set -e
 # cd /work/nvme/bfaq/xlin5/large_concept_model
+export HF_TOKEN="${HF_TOKEN:-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}"
 
 # 默认参数
-NUM_GPUS=2
-NUM_SAMPLES=2000  # 约10B tokens，设置为 "all" 或 "None" 表示处理整个数据集
-OUTPUT_DIR="output/fine_web"
+NUM_GPUS=8
+NUM_SAMPLES=2000  # 约16B tokens，设置为 "all" 或 "None" 表示处理整个数据集
+OUTPUT_DIR="/work/hdd/bfaq/jlyu3/lcm/preprocessed_data"
 BATCH_SIZE=20
 
 # prepare_fine_web 参数的默认值
