@@ -374,6 +374,30 @@ class LCMWandBRecorder(MetricRecorder):
                 config=config,
                 **kwargs,
             )
+            # Log full WandB status for debugging (project, entity, run name, sync mode)
+            if self._run is not None:
+                mode = getattr(self._run.settings, "mode", "unknown")
+                run_url = (
+                    f"https://wandb.ai/{self._run.entity}/{self._run.project}/runs/{self._run.id}"
+                    if self._run.entity and self._run.project
+                    else "N/A"
+                )
+                logger.info(
+                    "WandB status: project=%s entity=%s run_name=%s run_id=%s mode=%s local_dir=%s url=%s",
+                    self._run.project,
+                    self._run.entity,
+                    self._run.name,
+                    self._run.id,
+                    mode,
+                    output_dir,
+                    run_url,
+                )
+                if mode == "offline":
+                    logger.warning(
+                        "WandB is in OFFLINE mode: data saved locally only. "
+                        "Run `wandb sync %s` after training to upload to cloud.",
+                        output_dir,
+                    )
 
     def _define_run(self, run: str):
         if run in self.defined_runs:
@@ -402,6 +426,10 @@ class LCMWandBRecorder(MetricRecorder):
                 display_name = name
             else:
                 display_name = formatter.display_name
+
+            # Convert tensor to scalar for WandB line charts (WandB requires scalars)
+            if isinstance(value, torch.Tensor):
+                value = value.item() if value.numel() == 1 else float(value)
 
             self._run.log({f"{run}/{display_name}": value, f"{run}/step": step_nr})
 

@@ -16,6 +16,7 @@ if "HF_DATASETS_CACHE" not in os.environ:
 from pathlib import Path
 import sys
 import json
+from itertools import islice
 
 # Ensure project root is in path for scripts.utils import
 _project_root = Path(__file__).resolve().parent.parent
@@ -46,6 +47,9 @@ def prepare_fine_web(
     output_dir: str = "output/fine_web",
     num_samples = None,  # int | None: 要处理的样本数量，None 表示处理整个数据集
     start_index: int = 0,
+    rank: int = None,  # 当前进程 rank，0 <= rank < num_shards；默认从 RANK 环境变量或 0
+    shard_id: int = None,  # 同 rank，兼容 --shard_id 用法
+    num_shards: int = None,  # 总进程数（限制器），默认从 WORLD_SIZE 环境变量或 1
     batch_size: int = 10,
     max_sentence_length: int = 256,
     add_split_column: bool = True,
@@ -87,8 +91,23 @@ def prepare_fine_web(
         list<fixed_size_list[1024]>（即固定长度列表）格式，而我们的是可变长度列表。
         我们通过部署stopes的nested_numpy_to_pyarrow函数将可变长度列表转换为固定长度列表，从而解决了这个问题。
         见第270行代码：text_sentences_sonar_emb_pa = nested_numpy_to_pyarrow(all_embeddings)。
+
+        多卡（bash 启动）:
+        rank: 当前进程编号，0 <= rank < num_shards，同 RANK 环境变量
+        num_shards: 总进程数，同 WORLD_SIZE 环境变量
     """
-    
+    # 解析 rank / num_shards：从环境变量或参数，rank 必须满足 0 <= rank < num_shards
+    if rank is None:
+        rank = int(os.environ.get("RANK", "0"))
+    if shard_id is not None:
+        rank = shard_id
+    if num_shards is None:
+        num_shards = int(os.environ.get("WORLD_SIZE", "1"))
+    if num_shards < 1:
+        raise ValueError(f"num_shards 必须 >= 1，收到: {num_shards}")
+    if not (0 <= rank < num_shards):
+        raise ValueError(f"rank 必须满足 0 <= rank < num_shards，收到 rank={rank}, num_shards={num_shards}")
+
     # 处理 num_samples 的默认值和 None 情况
     # 支持字符串 "None"、"none" 或 Python None
     if num_samples is None or (isinstance(num_samples, str) and num_samples.lower() in ["none", "all"]):
@@ -104,8 +123,10 @@ def prepare_fine_web(
         process_all = False
     
     output_path = Path(output_dir)
+    if num_shards > 1:
+        output_path = output_path / f"rank_{rank}"
     output_path.mkdir(parents=True, exist_ok=True)
-    
+
     output_file = output_path / "data.parquet"
     metadata_file = output_path / ".progress_metadata.json"
     checkpoint_dir = output_path / "checkpoints"
@@ -265,13 +286,13 @@ def prepare_fine_web(
                     print(f"   🔄 从索引 {resume_from_index:,} 继续处理...")
                     print("=" * 80)
                     # 更新参数以从断点继续（保存原始参数用于 metadata）
-                    # 注意：original_start_index 和 original_num_samples 会在后面定义时使用
-                    # 这里先保存原始值
+                    # 多 shard 时仅用 existing_samples 跳过，不修改 start_index/num_samples
                     _saved_original_start_index = start_index
                     _saved_original_num_samples = num_samples
-                    start_index = resume_from_index
-                    if not process_all:
-                        num_samples = remaining_samples  # 更新为还需要处理的样本数
+                    if num_shards == 1:
+                        start_index = resume_from_index
+                        if not process_all:
+                            num_samples = remaining_samples
                 else:
                     # 文件已完整，直接返回
                     print(f"\n✅ 断点恢复成功！")
@@ -298,7 +319,9 @@ def prepare_fine_web(
     print("=" * 80)
     print("🚀 fine web 流式数据处理")
     print("=" * 80)
-    print(f"📁 输出目录: {output_dir}")
+    print(f"📁 输出目录: {output_path}")
+    if num_shards > 1:
+        print(f"🔢 Rank: {rank}/{num_shards} (总进程数={num_shards})")
     if process_all:
         print(f"📊 样本范围: {start_index:,} - 全部（处理整个数据集）")
         print(f"📊 样本数量: 全部")
@@ -350,7 +373,18 @@ def prepare_fine_web(
         streaming=True,  # 🔥 流式下载！
         token = os.getenv("HF_TOKEN")
     )
-    
+
+    # islice 链（与 SentenceSSM data_processing_pipeline_parquet_acc 一致）
+    stream = iter(dataset)
+    if start_index > 0:
+        stream = islice(stream, start_index, None)
+    if not process_all:
+        stream = islice(stream, num_samples)
+    if num_shards > 1:
+        stream = islice(stream, rank, None, num_shards)
+    if existing_samples > 0:
+        stream = islice(stream, existing_samples, None)
+
     # 收集处理后的数据
     all_data = []
     processed = 0
@@ -453,37 +487,37 @@ def prepare_fine_web(
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    # 使用tqdm显示进度（如果处理全部数据，total=None 表示未知总数）
-    total_expected = None if process_all else num_samples
+    # 使用tqdm显示进度（多 rank 时每 rank 约 num_samples/num_shards 样本）
+    if process_all:
+        total_expected = None
+    else:
+        total_expected = (num_samples - rank + num_shards - 1) // num_shards
     if existing_data is not None:
         total_expected = (total_expected or 0) + existing_samples
     with tqdm(total=total_expected, desc="处理进度", unit="样本", initial=existing_samples) as pbar:
         batch_texts = []
         batch_originals = []
-        
-        for idx, sample in enumerate(dataset):
-            # 跳过start_index之前的样本
-            if idx < start_index:
-                continue
-            # 如果不是处理全部数据，检查是否达到目标数量
-            if not process_all and processed >= num_samples:
-                break
-            
+        stream_index = 0
+
+        for sample in stream:
+            dataset_idx = start_index + stream_index * num_shards + rank
+            stream_index += 1
+
             text = sample['text'].strip()
             if not text:
-                last_processed_index = idx  # 记录索引，即使跳过了
+                last_processed_index = dataset_idx
                 continue
 
             # Unicode 标点归一化（与 SentenceSSM 一致）
             text = normalize_unicode_punctuation(text)
             if not text.strip():
-                last_processed_index = idx
+                last_processed_index = dataset_idx
                 continue
 
             # 分句
             sentences = splitter.split(text)
             if not sentences:
-                last_processed_index = idx  # 记录索引，即使跳过了
+                last_processed_index = dataset_idx
                 continue
 
             # 截断过长的句子
@@ -498,14 +532,14 @@ def prepare_fine_web(
                 sentences = filtered
 
             if not sentences:
-                last_processed_index = idx
+                last_processed_index = dataset_idx
                 continue
 
             batch_texts.append(sentences)
             batch_originals.append({
                 'url': sample.get('url', ''),
                 'timestamp': sample.get('timestamp', ''),
-                'dataset_index': idx,  # 保存原始索引，用于追踪
+                'dataset_index': dataset_idx,
             })
             
             # 批量编码
@@ -814,7 +848,7 @@ def prepare_fine_web(
     print("\n" + "=" * 80)
     print("✅ 处理完成！")
     print("=" * 80)
-    print(f"📁 输出文件: {output_dir}/data.parquet")
+    print(f"📁 输出文件: {output_path}/data.parquet")
     print(f"📊 处理样本: {processed}")
     print(f"💾 文件大小: {(output_path / 'data.parquet').stat().st_size / 1024 / 1024:.2f} MB")
     print("\n📝 提示:")

@@ -27,8 +27,12 @@ root_working_dir = Path(__file__).parent.parent.parent
 
 def set_mkl_num_threads():
     """Setting mkl num threads to 1, so that we don't get thread explosion."""
-    mkl_rt = ctypes.CDLL("libmkl_rt.so")
-    mkl_rt.mkl_set_num_threads(ctypes.byref(ctypes.c_int(1)))
+    try:
+        mkl_rt = ctypes.CDLL("libmkl_rt.so")
+        mkl_rt.mkl_set_num_threads(ctypes.byref(ctypes.c_int(1)))
+    except OSError:
+        # MKL not available (e.g. uv venv with OpenBLAS); skip silently.
+        pass
 
 
 def working_dir_resolver(p: str):

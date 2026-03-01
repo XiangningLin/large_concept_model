@@ -67,7 +67,7 @@
 |------|--------|------|
 | `lr_schedule` | `wsd` | 调度器类型；支持 `noop`、`myle`、`cosine`、`wsd` |
 | `num_lr_warmup_steps` | `10000`（pretrain recipe） | 固定 warmup 步数；Pretrain 模式下与 `lr_stage_ratios[0]` **独立叠加**；Decay 模式下通常设 0 |
-| `lr_stage_ratios` | `[0.1, 0.8, 0.1]`（recipe）<br>`[0.1, 0.4, 0.5]`（代码默认） | WSD 三阶段比例：Warmup / Stable / Decay，必须加和为 1.0 |
+| `lr_stage_ratios` | `[0.1, 0.9, 0.0]`（pretrain recipe）<br>`[0.1, 0.4, 0.5]`（代码默认） | WSD 三阶段比例：Warmup / Stable / Decay，必须加和为 1.0；decay=0 时保持 peak LR |
 | `start_lr` | `1e-7` | Warmup 起始 LR |
 | `final_lr` | `1e-5` | Decay 结束 LR |
 | `max_steps` | `250000` | 总训练步数；Decay 模式自动计算，无需手动设置 |
@@ -77,8 +77,9 @@
 
 **Pretrain 典型 `lr_stage_ratios`**：
 ```yaml
-lr_stage_ratios: [0.1, 0.8, 0.1]  # 10% warmup → 80% stable → 10% decay
+lr_stage_ratios: [0.1, 0.9, 0.0]  # 10% warmup → 90% stable → 0% decay（warmup+stable only）
 ```
+> 使用自定义 WSDLR 调度器，decay=0 时保持 peak LR，milestone checkpoint 可落在任意步；decay 阶段由 decay_from_pretrain 单独运行。
 
 **Decay 模式（自动强制）**：
 ```yaml
@@ -87,18 +88,18 @@ lr_stage_ratios: [0.0, 0.0, 1.0]  # 100% decay，从 peak LR 立即衰减
 
 ---
 
-## 模块 5：Decay-from-Pretrain 专用
+## 模块 5：Decay-from-Pretrain 专用（SentenceSSM 风格）
 
 > 仅在 `training_mode: "decay_from_pretrain"` 时有效。
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `pretrain_total_steps` | `250000` | Pretrain 实际跑的步数（从 checkpoint 信息获取） |
-| `decay_ratio` | `0.1` | Decay 占总预算 S 的比例；`decay_steps = pretrain_steps × ratio / (1 - ratio)` |
-| `num_lr_warmup_steps` | `0` | Decay 前短暂 warmup；通常设 0 |
+| `max_steps` | `277778` | **总 horizon S**；pretrain 跑 0.9S，decay 跑 0.1S |
+| `decay_ratio` | `0.1` | Decay 占总 horizon 的比例；`decay_steps = max_steps × decay_ratio` |
+| `pretrain_total_steps` | 自动推导 | `max_steps × (1 - decay_ratio)`，可覆盖 |
 | `pretrain_checkpoint_path` | `null` | 本地 pretrain checkpoint 路径（与 HF Hub 二选一） |
 
-**公式**：`pretrain_total_steps=100000, decay_ratio=0.1` → `decay_steps ≈ 11111`，`max_steps` 自动设为 `111111`
+**配置约定**：pretrain 用 `max_steps=0.9S`；decay 用 `max_steps=S`、`decay_ratio=0.1`。例：pretrain max_steps=250000 → decay max_steps=277778。
 
 **状态继承策略**：
 

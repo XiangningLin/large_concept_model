@@ -2,6 +2,12 @@
 
 本目录存放 LCM 各模块的**逻辑链分析**文档，用于梳理从入口到输出的数据流、分支与依赖关系。
 
+## 总览
+
+| 文档 | 说明 |
+|------|------|
+| [../core-logic-map.md](../core-logic-map.md) | **核心逻辑总览**：入口、训练、数据、checkpoint、评估的完整调用链与 Mermaid 图 |
+
 ## 已整理
 
 ### 数据预处理
@@ -9,6 +15,7 @@
 | 文档 | 说明 |
 |------|------|
 | [fineweb_preprocessing.md](./fineweb_preprocessing.md) | FineWeb 数据预处理：`prepare_data.sh` → `prepare_fine_web.py` → Parquet + `update_datacards.py` 的完整逻辑链 |
+| [../data_packing_comparison.md](../data_packing_comparison.md) | **Packing 功能对比**：SentenceSSM vs LCM 的 packing 逻辑链，以及 MSE pretrain 下的限制与扩展方案 |
 
 ### 训练能力与逻辑链
 

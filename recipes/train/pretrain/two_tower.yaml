@@ -45,18 +45,14 @@ seed: 1
 profile: false
 
 data_loading_config:
-  max_tokens: 7168
+  batch_size: 32
+  max_tokens: null
   min_batch_size: 1
-  len_to_wrap_long_seq: 128
-  packing: false
   min_length_of_sequences: 1
   min_length_after_batching: 2
   num_parallel_calls: 1
   nb_prefetch: 5
   nb_epochs: 1
-
-validation_data_loading_config:
-  len_to_wrap_long_seq: 128
 
 training_data:
   - name: "pretraining_data=train"

@@ -21,8 +21,8 @@ lr: 0.0004
 lr_schedule: wsd
 lr_stage_ratios:
   - 0.1   # warmup  = 10%
-  - 0.8   # stable  = 40%
-  - 0.1   # decay   = 50%
+  - 0.9   # stable  = 90%
+  - 0.0   # decay   = 0% (warmup+stable only; decay in decay_from_pretrain)
 start_lr: 1e-7
 final_lr: 1e-5
 num_lr_warmup_steps: 10_000
@@ -46,18 +46,14 @@ seed: 1
 profile: false
 
 data_loading_config:
-  max_tokens: 7168
+  batch_size: 32
+  max_tokens: null
   min_batch_size: 1
-  len_to_wrap_long_seq: 128
-  packing: false
   min_length_of_sequences: 1
   min_length_after_batching: 2
   num_parallel_calls: 1
   nb_prefetch: 5
   nb_epochs: 1
-
-validation_data_loading_config:
-  len_to_wrap_long_seq: 128
 
 training_data:
   - name: "pretraining_data=train"
@@ -78,6 +74,10 @@ requirements:
 # ── Training mode ──
 training_mode: "pretrain"
 
+# ── LR sweep mode (override via lr_sweep_pretrain.sh) ──
+lr_sweep_mode: false
+tail_ratio: 0.2
+
 # ── WandB resume ──
 wandb_run_id: null  # Set to a WandB run ID to resume logging to same run
 
@@ -87,6 +87,10 @@ wandb_run_id: null  # Set to a WandB run ID to resume logging to same run
 #   - 5000000000
 #   - 10000000000
 tokens_per_sentence: 18.5
+
+# ── Resume (only when explicitly set; default: train from scratch) ──
+resume_from: null  # Set to local path or "hf" to resume
+resume_step: null  # When resume_from set: load this step (scaling law); null = load last
 
 # ── HuggingFace Hub (optional) ──
 hf_repo_id: null

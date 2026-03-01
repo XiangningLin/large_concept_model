@@ -36,13 +36,12 @@ CUDA_VISIBLE_DEVICES=0,1 .venv/bin/python -m torch.distributed.run --standalone 
 ## 2.3 Decay-from-Pretrain
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 .venv/bin/python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=2 -m lcm.train launcher=standalone +decay_from_pretrain=mse ++trainer.output_dir=checkpoints/lcm_decay ++trainer.pretrain_total_steps=100000 ++trainer.decay_ratio=0.1 ++trainer.num_lr_warmup_steps=0 ++trainer.hf_repo_id=LGVamper/Sentence-SSM ++trainer.hf_token=hf_xxx ++trainer.hf_checkpoint_subfolder=lcm_780M_pretrain ++trainer.hf_checkpoint_filename=step_100000 ++trainer.hf_checkpoint_save_subfolder=lcm_780M_decay ++trainer.wandb_run_id=abc123def '++trainer.training_data.0.name="pretraining_data=train"' '++trainer.validation_data.0.name="pretraining_data=validation"'
+CUDA_VISIBLE_DEVICES=0,1 .venv/bin/python -m torch.distributed.run --standalone --nnodes=1 --nproc-per-node=2 -m lcm.train launcher=standalone +decay_from_pretrain=mse ++trainer.output_dir=checkpoints/lcm_decay ++trainer.max_steps=111112 ++trainer.decay_ratio=0.1 ++trainer.hf_repo_id=LGVamper/Sentence-SSM ++trainer.hf_token=hf_xxx ++trainer.hf_checkpoint_subfolder=lcm_780M_pretrain ++trainer.hf_checkpoint_filename=step_100000 ++trainer.hf_checkpoint_save_subfolder=lcm_780M_decay ++trainer.wandb_run_id=abc123def '++trainer.training_data.0.name="pretraining_data=train"' '++trainer.validation_data.0.name="pretraining_data=validation"'
 ```
 
-> `max_steps` 自动计算：`pretrain_total_steps × decay_ratio / (1 - decay_ratio) = 100000 × 0.1 / 0.9 ≈ 11111`
-> Decay 继承 pretrain 的 step_nr（如 100001 开始）、数据进度、RNG 状态、optimizer 状态。
+> **SentenceSSM 风格**：pretrain 用 `max_steps=100000` (0.9S)，decay 用 `max_steps=111112` (S)。decay 从 checkpoint 跑到 step 111112。
+> Decay 继承 pretrain 的 step_nr、数据进度、RNG 状态、optimizer 状态。
 > 只有 lr_scheduler（使用全新 decay-only WSD）和 milestones（使用 recipe 中新配置的）是全新的。
-> WandB 自动命名为 `lcm_decay_from_pretrain_{timestamp}`，或设 `wandb_run_id` 续接 pretrain run。
 
 ---
 
@@ -52,8 +51,7 @@ CUDA_VISIBLE_DEVICES=0,1 .venv/bin/python -m torch.distributed.run --standalone 
 |------|------|
 | `training_data.0.name` | Hydra list 索引语法，`.0` = 第一个数据集 |
 | `wandb_run_id` | WandB run ID，设为 pretrain 的 run ID 可续接曲线 |
-| `pretrain_total_steps` | Pretrain 阶段实际运行步数（不含 decay） |
-| `decay_ratio` | Decay 阶段占总预算 S 的比例（S = pretrain + decay） |
-| `num_lr_warmup_steps` | WSD 调度器 warmup 步数，decay 模式下可配置 |
+| `max_steps` | 总 horizon S；pretrain 用 0.9S，decay 用 S |
+| `decay_ratio` | Decay 占总 horizon 的比例（0.1 = 10%） |
 | `hf_checkpoint_filename` | 指定加载的 checkpoint 文件名 |
 | `hf_checkpoint_save_subfolder` | 保存 checkpoint 到 HF 的不同子目录 |

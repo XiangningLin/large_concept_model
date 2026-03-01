@@ -214,39 +214,61 @@ class LCMTrainerBuilder(TrainerBuilder):
             self.gang,
         )
 
-        self.has_checkpoint = checkpoint_manager.has_checkpoint()
-
-        # ── If no local checkpoint, try to download from HuggingFace Hub ──
-        if not self.has_checkpoint and self.config.hf_repo_id and self.config.hf_checkpoint_filename:
-            logger.info(
-                f"No local checkpoint found. Downloading from HF Hub: "
-                f"{self.config.hf_repo_id}/{self.config.hf_checkpoint_subfolder}"
-            )
-            try:
-                downloaded_dir = download_checkpoint_folder_from_hf(
-                    repo_id=self.config.hf_repo_id,
-                    subfolder=self.config.hf_checkpoint_subfolder or "checkpoints",
-                    local_dir=self.config.output_dir / "hf_downloads",
-                    token=self.config.hf_token,
+        # ── Resume only when resume_from is explicitly set ──
+        resume_from = getattr(self.config, "resume_from", None)
+        if resume_from is None:
+            self.has_checkpoint = False
+        elif resume_from == "hf":
+            # HF: download when hf_repo_id and hf_checkpoint_filename are set
+            self.has_checkpoint = checkpoint_manager.has_checkpoint()
+            if not self.has_checkpoint and self.config.hf_repo_id and self.config.hf_checkpoint_filename:
+                base_subfolder = self.config.hf_checkpoint_subfolder or "checkpoints"
+                subfolder = (
+                    f"{base_subfolder}/{self.config.hf_checkpoint_filename}"
+                    if self.config.hf_checkpoint_filename
+                    else base_subfolder
                 )
-                # Copy the downloaded checkpoint into the local checkpoint directory
-                # so that FileCheckpointManager can find it
-                import shutil
-                local_ckpt_dir = self.config.output_dir / "checkpoints"
-                local_ckpt_dir.mkdir(parents=True, exist_ok=True)
-                for item in downloaded_dir.iterdir():
-                    dest = local_ckpt_dir / item.name
-                    if item.is_dir():
-                        if dest.exists():
-                            shutil.rmtree(dest)
-                        shutil.copytree(item, dest)
-                    else:
-                        shutil.copy2(item, dest)
-                # Re-check now
-                self.has_checkpoint = checkpoint_manager.has_checkpoint()
-                logger.info(f"HF checkpoint downloaded. has_checkpoint={self.has_checkpoint}")
-            except Exception as e:
-                logger.warning(f"Failed to download checkpoint from HF Hub: {e}")
+                logger.info(
+                    f"Resume from HF: Downloading from {self.config.hf_repo_id}/{subfolder}"
+                )
+                try:
+                    import shutil
+                    downloaded_dir = download_checkpoint_folder_from_hf(
+                        repo_id=self.config.hf_repo_id,
+                        subfolder=subfolder,
+                        local_dir=self.config.output_dir / "hf_downloads",
+                        token=self.config.hf_token,
+                    )
+                    local_ckpt_dir = self.config.output_dir / "checkpoints"
+                    local_ckpt_dir.mkdir(parents=True, exist_ok=True)
+                    # downloaded_dir is the step_XXXX folder; copy into checkpoints/step_XXXX/
+                    dest_step_dir = local_ckpt_dir / downloaded_dir.name
+                    dest_step_dir.mkdir(parents=True, exist_ok=True)
+                    for item in downloaded_dir.iterdir():
+                        dest = dest_step_dir / item.name
+                        if item.is_dir():
+                            if dest.exists():
+                                shutil.rmtree(dest)
+                            shutil.copytree(item, dest)
+                        else:
+                            shutil.copy2(item, dest)
+                    self.has_checkpoint = checkpoint_manager.has_checkpoint()
+                    logger.info(f"HF checkpoint downloaded. has_checkpoint={self.has_checkpoint}")
+                except Exception as e:
+                    logger.warning(f"Failed to download checkpoint from HF Hub: {e}")
+        else:
+            # Local path: load from resume_from directory
+            resume_path = Path(resume_from)
+            if not resume_path.exists():
+                raise FileNotFoundError(f"resume_from path does not exist: {resume_from}")
+            resume_checkpoint_manager = FileCheckpointManager(resume_path, self.gang)
+            self.has_checkpoint = resume_checkpoint_manager.has_checkpoint()
+            if not self.has_checkpoint:
+                raise RuntimeError(
+                    f"No checkpoint found in resume_from directory: {resume_from}"
+                )
+            # Store for use after trainer.setup()
+            self._resume_checkpoint_manager = resume_checkpoint_manager
 
         model = self.create_model()
 
@@ -277,12 +299,18 @@ class LCMTrainerBuilder(TrainerBuilder):
         trainer.setup()
 
         if self.has_checkpoint:
+            load_manager = getattr(self, "_resume_checkpoint_manager", checkpoint_manager)
+            resume_step = getattr(self.config, "resume_step", None)
             if self.config.training_mode == "decay_from_pretrain":
-                # ── Decay mode: load pretrain checkpoint's model & optimizer, ──
-                # ── but reset step to 1 and use the new decay-only LR schedule.──
-                self._load_pretrain_for_decay(trainer, checkpoint_manager)
+                self._load_pretrain_for_decay(trainer, load_manager, resume_step)
+            elif load_manager is checkpoint_manager:
+                trainer.restore(step_nr=resume_step)
             else:
-                trainer.restore()
+                # Local resume_from: manually load (trainer.restore uses main checkpoint_manager)
+                self._restore_from_manager(trainer, load_manager, resume_step)
+            # Clear temp ref
+            if hasattr(self, "_resume_checkpoint_manager"):
+                delattr(self, "_resume_checkpoint_manager")
 
         return trainer
 
@@ -290,30 +318,46 @@ class LCMTrainerBuilder(TrainerBuilder):
         self,
         trainer: LCMTrainer,
         checkpoint_manager: FileCheckpointManager,
+        resume_step: Optional[int] = None,
     ) -> None:
         """Load a pretrain checkpoint for decay_from_pretrain mode.
 
-        This loads model and optimizer weights from the pretrain checkpoint
-        but resets the step counter to 1 and keeps the newly-built decay-only
-        LR scheduler (instead of restoring the pretrain scheduler).
+        Loads model + optimizer weights from the pretrain checkpoint, keeps
+        the freshly-built full-horizon WSD scheduler, and advances it to the
+        checkpoint step so the LR curve picks up exactly where pretrain left
+        off (stable phase continues if step < 0.9S, then decays to S).
         """
         logger.info("Loading pretrain checkpoint for decay_from_pretrain mode.")
 
-        step_nr, checkpoint = checkpoint_manager.load_last_checkpoint()
+        if resume_step is not None:
+            if not checkpoint_manager.has_checkpoint(resume_step):
+                raise RuntimeError(
+                    f"Checkpoint for step {resume_step} not found in "
+                    f"{checkpoint_manager._checkpoint_dir}"
+                )
+            step_nr = resume_step
+            checkpoint = checkpoint_manager.load_checkpoint(resume_step)
+        else:
+            step_nr, checkpoint = checkpoint_manager.load_last_checkpoint()
 
         logger.info(f"Pretrain checkpoint loaded from step {step_nr}.")
 
-        # We want to load model + optimizer + data_loader + rng state,
-        # but NOT the lr_scheduler (the new decay-only scheduler was already built).
-        saved_lr_scheduler_state = None
         if "lr_scheduler" in checkpoint:
-            saved_lr_scheduler_state = checkpoint.pop("lr_scheduler")
-            logger.info("Skipping pretrain LR scheduler state (using decay-only schedule).")
+            checkpoint.pop("lr_scheduler")
+            logger.info("Skipping pretrain LR scheduler state (using full-horizon decay schedule).")
+        checkpoint["lr_scheduler"] = trainer.lr_scheduler.state_dict()
 
         trainer.load_state_dict(checkpoint)
 
-        # Restore total_tokens_seen from pretrain for milestone continuity
-        # but do NOT inherit saved_milestones — decay uses its own fresh milestones.
+        # Advance the fresh full-horizon WSD scheduler to the checkpoint step
+        # so its internal counter matches the training position.
+        for _ in range(step_nr):
+            trainer.lr_scheduler.step()
+        logger.info(
+            f"LR scheduler advanced to step {step_nr} "
+            f"(last_epoch={trainer.lr_scheduler.last_epoch})."
+        )
+
         try:
             metadata = checkpoint_manager.load_metadata(step_nr)
             if metadata is not None and "total_tokens_seen" in metadata:
@@ -324,21 +368,55 @@ class LCMTrainerBuilder(TrainerBuilder):
         except Exception:
             logger.warning("Could not restore milestone state from pretrain checkpoint.")
 
-        # Decay uses fresh milestones from the decay recipe config
         trainer.saved_milestones = set()
 
         trainer.gang.barrier()
 
-        # Inherit step_nr from pretrain checkpoint and extend max_steps
-        decay_steps = trainer.config.max_steps  # already computed as decay-only steps
+        decay_steps = int(trainer.config.max_steps * trainer.config.decay_ratio)
         trainer.step_nr = step_nr + 1
-        trainer.config.max_steps = step_nr + decay_steps
 
         logger.info(
             f"Decay-from-pretrain setup complete. "
             f"Resuming from step {trainer.step_nr}, "
-            f"decay will run for {decay_steps} steps (max_steps={trainer.config.max_steps})."
+            f"max_steps={trainer.config.max_steps} (S), "
+            f"decay starts at step {trainer.config.pretrain_total_steps} (0.9S), "
+            f"decay_steps={decay_steps}."
         )
+
+    def _restore_from_manager(
+        self,
+        trainer: LCMTrainer,
+        load_manager: FileCheckpointManager,
+        resume_step: Optional[int] = None,
+    ) -> None:
+        """Restore trainer state from a checkpoint manager (e.g. resume_from local path)."""
+        logger.info("Loading checkpoint from resume_from path.")
+        if resume_step is not None:
+            if not load_manager.has_checkpoint(resume_step):
+                raise RuntimeError(
+                    f"Checkpoint for step {resume_step} not found in "
+                    f"{load_manager._checkpoint_dir}"
+                )
+            step_nr = resume_step
+            checkpoint = load_manager.load_checkpoint(resume_step)
+        else:
+            step_nr, checkpoint = load_manager.load_last_checkpoint()
+        logger.info(f"Checkpoint loaded, restoring training from step {step_nr}.")
+        trainer.load_state_dict(checkpoint)
+        trainer.gang.barrier()
+        logger.info("Training restored, resuming.")
+        trainer.step_nr = step_nr + 1
+        try:
+            metadata = load_manager.load_metadata(step_nr)
+            if metadata is not None:
+                if "total_tokens_seen" in metadata:
+                    trainer.total_tokens_seen = metadata["total_tokens_seen"]
+                    logger.info(f"Restored total_tokens_seen={trainer.total_tokens_seen:,}")
+                if "saved_milestones" in metadata:
+                    trainer.saved_milestones = set(metadata["saved_milestones"])
+                    logger.info(f"Restored saved_milestones={trainer.saved_milestones}")
+        except Exception:
+            logger.warning("Could not restore milestone state from checkpoint metadata.")
 
 
 def prepare_lcm_trainer(config: LCMTrainingConfig) -> LCMTrainer:

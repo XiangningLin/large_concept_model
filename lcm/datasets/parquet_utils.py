@@ -102,10 +102,20 @@ def prefix_and_suffix_one_list_column(
 
 
 def define_parquet_dataset(parquet_path: str, partition_filters) -> pq.ParquetDataset:
-    return pq.ParquetDataset(
-        parquet_path,
-        filters=partition_filters,
-    )
+    import pyarrow.dataset as ds
+
+    partitioning = ds.HivePartitioning(pa.schema([("split", pa.string())]))
+    try:
+        return pq.ParquetDataset(
+            parquet_path,
+            filters=partition_filters,
+            partitioning=partitioning,
+        )
+    except Exception:
+        return pq.ParquetDataset(
+            parquet_path,
+            filters=partition_filters,
+        )
 
 
 @lru_cache()

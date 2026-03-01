@@ -4,8 +4,8 @@ _trainer_: lcm.train.lcm.trainer.prepare_lcm_trainer
 
 output_dir: ??
 
-# Parameter Size: ~780M
-model_arch: base_lcm_780M
+# Parameter Size: ~376M
+model_arch: base_lcm_370M
 
 criterion:
   name: next_sentence_mse
@@ -63,9 +63,8 @@ validation_data:
   - name: "pretraining_data=validation"
     source_suffix_text: "End of text."
 
-# Reduced resource requirements for 780M model
 requirements:
-  nodes: 2
+  nodes: 1
   tasks_per_node: 8
   gpus_per_node: 8
   cpus_per_task: 32
@@ -76,13 +75,11 @@ requirements:
 training_mode: "pretrain"
 
 # ── WandB resume ──
-wandb_run_id: null  # Set to a WandB run ID to resume logging to same run
+wandb_run_id: null
 
 # ── Token milestones (optional) ──
 # checkpoint_milestones:
 #   - 1000000000
-#   - 5000000000
-#   - 10000000000
 tokens_per_sentence: 18.5
 
 # ── HuggingFace Hub (optional) ──

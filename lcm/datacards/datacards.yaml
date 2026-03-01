@@ -35,3 +35,13 @@ source_column: "text_sentences_sonar_emb"
 source_text_column: "text_sentences"
 # partition columns:
 # "split" (train, validation) - 80% train, 19% validation with seed=42
+---
+name: "fine_web_edu_packed"
+parquet_path:
+  s3: "output/fine_web_test_packed"
+  local: "/work/hdd/bfaq/jlyu3/lcm/preprocessed_data_packed"
+source_column: "text_sentences_sonar_emb"
+source_text_column: "text_sentences"
+# Pre-packed data with max_seq_len=128, "End of text." embedded between documents
+# partition columns:
+# "split" (train, validation)

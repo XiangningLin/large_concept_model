@@ -17,8 +17,6 @@ from fairseq2.data.data_pipeline import DataPipeline, DataPipelineBuilder
 from fairseq2.data.parquet.tools import BatchOutputType, apply_filter, concat_table
 from pyarrow.dataset import get_partition_keys
 from stopes.utils.arrow_utils import (
-    explode_table_with_fixed_length,
-    explode_table_with_max_length,
     is_list_like,
 )
 
@@ -239,10 +237,6 @@ class SingleParquetDatasetDataloader:
         pipeline = self.create_on_the_fly_columns(pipeline)
         pipeline = self.filter_by_aligned_length(pipeline)
 
-        # If we want to wrap before adding affixes
-        if self.loading_config.wrap_before_affixing:
-            pipeline = self.add_wrapping_to_max_length_pipeline(pipeline)
-
         # Filtering
         pipeline = self.add_quality_score_filters(pipeline)
         pipeline = self.add_min_sentence_number_in_doc_filter(
@@ -279,17 +273,11 @@ class SingleParquetDatasetDataloader:
         )
         pipeline = pipeline.map(concat_table, num_parallel_calls=1)
 
-        # wrap documents after affixing
-        if not self.loading_config.wrap_before_affixing:
-            # Note that packing with proper attention masks and position codes requires
-            # document indices that cover all sentences. Currently this can only come from affixing before wrapping.
-            # Adding affixes after wrapping will require annexing these affixes to edge sentences which is not intuitive.
-            if self.loading_config.shuffle:
-                pipeline = pipeline.map(
-                    partial(shuffle_table, random_state=self.random_state),
-                    num_parallel_calls=1,
-                )
-            pipeline = self.add_wrapping_to_max_length_pipeline(pipeline)
+        if self.loading_config.shuffle:
+            pipeline = pipeline.map(
+                partial(shuffle_table, random_state=self.random_state),
+                num_parallel_calls=1,
+            )
 
         # batch with batch_size or max_tokens
         pipeline = self.add_inner_pipeline(pipeline)
@@ -416,15 +404,6 @@ class SingleParquetDatasetDataloader:
         return int(max(self.loading_config.nb_prefetch * x, 0))
 
     def config_post_init(self) -> None:
-        if getattr(self.loading_config, "len_to_wrap_long_seq", None):
-            if (
-                self.dataset_config.target_column
-                or self.dataset_config.target_text_column
-            ):
-                raise ValueError(
-                    "Using `len_to_wrap_long_seq` is not supported for suppervised training"
-                )
-
         if self.loading_config.even_sharding:
             assert self.loading_config.seed is not None, (
                 "`even_sharding` sharding requires to seed to be set"
@@ -487,22 +466,12 @@ class SingleParquetDatasetDataloader:
         The formula behind `_shuffling_tokens_size` is the following:
         - If we use `max_tokens` in config, we want to have a least _shuffling_tokens_size = 4 * max_tokens,
             so that at least 4 full batch will be formed next. It's good for shuffling and to avoid having "remainders" too often.
-        - For wrapping/packing case, we use a proxy for `max_tokens` as `batch_size` * `len_to_wrap_long_seq`
         - If not, some average fragment characteristic `mean_fragment_number_of_tokens`, multiplied by 1.5 to get on average >=2 tables
-        - Finally, if no, other info is available, we use 10_000 as arbitrary proxy (good typical value for many of our datasets).
+        - Finally, if no other info is available, we use 10_000 as arbitrary proxy (good typical value for many of our datasets).
 
         """
         if self.loading_config.max_tokens is not None:
             return 4 * self.loading_config.max_tokens
-        if (
-            self.loading_config.batch_size is not None
-            and self.loading_config.len_to_wrap_long_seq is not None
-        ):
-            return (
-                4
-                * self.loading_config.len_to_wrap_long_seq
-                * self.loading_config.batch_size
-            )
 
         if basic_stats.mean_fragment_number_of_tokens is not None:
             return int(
@@ -537,18 +506,11 @@ class SingleParquetDatasetDataloader:
             # it can happen for evaluation
             nb_frags = 1.0
         elif self.loading_config.batch_size is not None:
-            if self.loading_config.len_to_wrap_long_seq is not None:
-                max_tokens = (
-                    self.loading_config.len_to_wrap_long_seq
-                    * self.loading_config.batch_size
-                )
-                nb_frags = 3 * max_tokens / mean_fragment_number_of_tokens
-            else:
-                nb_frags = (
-                    5
-                    * self.loading_config.batch_size
-                    / basic_stats.mean_fragment_length
-                )
+            nb_frags = (
+                5
+                * self.loading_config.batch_size
+                / basic_stats.mean_fragment_length
+            )
         elif self.loading_config.max_tokens is not None:
             nb_frags = (
                 3 * self.loading_config.max_tokens / mean_fragment_number_of_tokens
@@ -828,46 +790,6 @@ class SingleParquetDatasetDataloader:
         pipeline = pipeline.filter(lambda table: bool(len(table) > 0))
 
         return pipeline
-
-    def add_wrapping_to_max_length_pipeline(
-        self, pipeline: DataPipelineBuilder
-    ) -> DataPipelineBuilder:
-        len_to_wrap_long_seq = getattr(
-            self.loading_config, "len_to_wrap_long_seq", None
-        )
-        if len_to_wrap_long_seq is None:
-            return pipeline
-
-        columns_to_wrap: List[str] = [
-            x
-            for x in (
-                self.dataset_config.source_column,
-                self.dataset_config.source_text_column,
-                self.dataset_config.source_quality_column,
-            )
-            if x is not None
-        ]
-
-        if self.loading_config.packing:
-            method = return_none_on_failure(explode_table_with_fixed_length)
-            logger.info(
-                f"Wrapping to len_to_wrap_long_seq={len_to_wrap_long_seq} with fixed length (packing)"
-            )
-        else:
-            method = return_none_on_failure(explode_table_with_max_length)
-            logger.info(
-                f"Wrapping to len_to_wrap_long_seq={len_to_wrap_long_seq} with max length (without packing)"
-            )
-
-        pipeline = pipeline.map(
-            partial(
-                method,
-                columns=columns_to_wrap,
-                max_seq_len=len_to_wrap_long_seq,
-            ),
-            num_parallel_calls=self._num_parallel_call(self.nb_parallel_fragments),
-        )
-        return pipeline.filter(lambda table: table is not None)
 
     def add_min_max_sentence_len_in_doc_filter(
         self, pipeline: DataPipelineBuilder

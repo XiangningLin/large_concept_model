@@ -321,17 +321,28 @@ class TrainingConfig:
     ``'decay_from_pretrain'`` – load a pretrain checkpoint and run only the WSD decay phase."""
 
     decay_ratio: float = 0.1
-    """Ratio of decay steps to pretrain total steps.
+    """Ratio of decay phase to total horizon (SentenceSSM style).
     Only used when ``training_mode='decay_from_pretrain'``.
-    ``decay_steps = int(pretrain_total_steps * decay_ratio)``."""
+    With max_steps=S (total horizon): pretrain=0.9S, decay=0.1S.
+    ``decay_steps = int(max_steps * decay_ratio)``."""
+
+    # ── LR sweep mode ─────────────────────────────────────────────────
+    lr_sweep_mode: bool = False
+    """When True, restrict validation to last ``tail_ratio`` of steps and
+    print parseable tail metrics (avg/std) at the end of training.
+    Used by ``lr_sweep_pretrain.sh`` to find the optimal learning rate."""
+
+    tail_ratio: float = 0.2
+    """Fraction of total steps to use as 'tail' for sweep metrics
+    (e.g., 0.2 = last 20%).  Only effective when ``lr_sweep_mode=True``."""
 
     pretrain_checkpoint_path: Optional[str] = None
     """Path to the pretrain checkpoint directory (local).
     Used in ``decay_from_pretrain`` mode if HF Hub is not configured."""
 
     pretrain_total_steps: Optional[int] = None
-    """Total optimizer steps in the pretrain phase.
-    Required for ``decay_from_pretrain`` mode to compute ``decay_steps``."""
+    """Total optimizer steps in the pretrain phase (0.9S).
+    In decay_from_pretrain mode, derived from max_steps*(1-decay_ratio) when null."""
 
     # ── HuggingFace Hub checkpoint management ───────────────────────────
     hf_repo_id: Optional[str] = None
@@ -352,6 +363,16 @@ class TrainingConfig:
     hf_checkpoint_save_subfolder: Optional[str] = None
     """Subfolder in the HF repo for *saving* checkpoints.
     Defaults to ``hf_checkpoint_subfolder`` if ``None``."""
+
+    resume_from: Optional[str] = None
+    """Path to checkpoint directory for resuming, or 'hf' to use HuggingFace Hub.
+    When None (default), training always starts from scratch.
+    When set to a local path: load checkpoint from that directory.
+    When set to 'hf': use hf_repo_id + hf_checkpoint_filename to download and load."""
+
+    resume_step: Optional[int] = None
+    """When resume_from is set, the step number to load; None loads the last checkpoint.
+    Used for scaling law experiments that need checkpoints from specific training stages."""
 
 
 class Trainer(StatefulObjectBag):
@@ -374,6 +395,7 @@ class Trainer(StatefulObjectBag):
     card_metdata: Dict
     _train_step_time: float
     _valid_step_time: float
+    _last_step_lr: float
 
     def __init__(
         self,
@@ -458,6 +480,7 @@ class Trainer(StatefulObjectBag):
         self.stopwatch = stopwatch
         self._train_step_time = 0.0
         self._valid_step_time = 0.0
+        self._last_step_lr = 0.0
 
         self.criterion = None  # type: ignore
 
@@ -533,26 +556,35 @@ class Trainer(StatefulObjectBag):
         stage_ratio = tuple(self.config.lr_stage_ratios)
 
         if self.config.training_mode == "decay_from_pretrain":
-            # Decay-only phase: override scheduler to WSD with 100% decay
-            assert self.config.pretrain_total_steps is not None, (
-                "pretrain_total_steps must be set for decay_from_pretrain mode"
-            )
-            decay_steps = int(self.config.pretrain_total_steps * self.config.decay_ratio
-                              / (1 - self.config.decay_ratio))
-            self.config.max_steps = decay_steps
-            max_steps = decay_steps
+            # SentenceSSM style: max_steps=S (total horizon), decay_ratio=0.1
+            # Build a FULL-HORIZON WSD scheduler so that if the checkpoint
+            # step < 0.9S, training continues at peak_lr (stable phase) until
+            # 0.9S, then decays to S.  The scheduler is later advanced to the
+            # checkpoint step in _load_pretrain_for_decay.
+            decay_steps = int(self.config.max_steps * self.config.decay_ratio)
+            pretrain_total_steps = int(self.config.max_steps * (1 - self.config.decay_ratio))
+            if self.config.pretrain_total_steps is not None:
+                if self.config.pretrain_total_steps != pretrain_total_steps:
+                    logger.warning(
+                        f"pretrain_total_steps={self.config.pretrain_total_steps} overridden by "
+                        f"max_steps*(1-decay_ratio)={pretrain_total_steps}"
+                    )
+            self.config.pretrain_total_steps = pretrain_total_steps
 
-            # Force WSD schedule with decay-only ratio
             schedule = "wsd"
-            stage_ratio = (0.0, 0.0, 1.0)  # no warmup, no stable, all decay
-            # warmup_steps comes from config.num_lr_warmup_steps (user can set to 0 or small)
+            pretrain_ratios = tuple(self.config.lr_stage_ratios)
+            scale = 1.0 - self.config.decay_ratio
+            stage_ratio = (
+                pretrain_ratios[0] * scale,
+                pretrain_ratios[1] * scale,
+                self.config.decay_ratio,
+            )
 
             logger.info(
-                f"decay_from_pretrain mode: "
-                f"pretrain_total_steps={self.config.pretrain_total_steps}, "
-                f"decay_ratio={self.config.decay_ratio}, "
-                f"decay_steps (max_steps)={max_steps}, "
-                f"stage_ratio={stage_ratio}"
+                f"decay_from_pretrain mode: max_steps={self.config.max_steps} (total S), "
+                f"pretrain_total_steps={pretrain_total_steps} (0.9S), "
+                f"decay_ratio={self.config.decay_ratio}, decay_steps={decay_steps} (0.1S), "
+                f"stage_ratio={stage_ratio} (full-horizon WSD)"
             )
 
         # check
@@ -632,6 +664,17 @@ class Trainer(StatefulObjectBag):
         """Run the trainer for up to `max_steps`"""
 
         logger.info(f"Running training on {self.gang.size} device(s).")
+
+        # LR sweep bookkeeping
+        if self.config.lr_sweep_mode:
+            self._tail_start_step = int(
+                self.config.max_steps * (1 - self.config.tail_ratio)
+            )
+            self._tail_val_losses: List[float] = []
+            logger.info(
+                f"LR sweep mode: tail eval starts at step {self._tail_start_step} "
+                f"(tail_ratio={self.config.tail_ratio})"
+            )
 
         data_iter = self.training_data_loader.iterate_batches()
 
@@ -736,15 +779,47 @@ class Trainer(StatefulObjectBag):
                     logger.info(f"R{self.gang.rank} - Done resetting the datapipeline")
                     data_iter = self.training_data_loader.iterate_batches()
 
+        # LR sweep: print parseable tail metrics for the bash wrapper
+        if self.config.lr_sweep_mode and self.gang.rank == 0:
+            import statistics
+
+            tail_losses = self._tail_val_losses
+            tail_avg = (
+                float(statistics.mean(tail_losses)) if tail_losses else 0.0
+            )
+            tail_std = (
+                float(statistics.stdev(tail_losses))
+                if len(tail_losses) > 1
+                else 0.0
+            )
+            print(
+                f"FINAL LOSS: tail_avg_val_loss={tail_avg}, "
+                f"tail_std={tail_std}, tail_n={len(tail_losses)}",
+                flush=True,
+            )
+
         self._save_model_card_for_last_checkpoint(to_checkpoint_dir=False)
         logger.info(f"Finished training after {self.step_nr - 1} step(s).")
 
         self.gang.close()
 
-    def restore(self) -> None:
-        logger.info("Attempting to load last checkpoint.")
+    def restore(self, step_nr: Optional[int] = None) -> None:
+        """Restore trainer state from checkpoint.
 
-        step_nr, checkpoint = self.checkpoint_manager.load_last_checkpoint()
+        :param step_nr:
+            If set, load this specific step; otherwise load the last checkpoint.
+        """
+        if step_nr is not None:
+            if not self.checkpoint_manager.has_checkpoint(step_nr):
+                raise RuntimeError(
+                    f"Checkpoint for step {step_nr} not found in "
+                    f"{self.checkpoint_manager._checkpoint_dir}"
+                )
+            logger.info(f"Attempting to load checkpoint at step {step_nr}.")
+            checkpoint = self.checkpoint_manager.load_checkpoint(step_nr)
+        else:
+            logger.info("Attempting to load last checkpoint.")
+            step_nr, checkpoint = self.checkpoint_manager.load_last_checkpoint()
 
         logger.info(f"Checkpoint loaded, restoring training from step {step_nr}.")
 
@@ -858,6 +933,9 @@ class Trainer(StatefulObjectBag):
                 logger.debug(f"Repeating training step {step_nr}.")
 
             else:
+                # Capture LR *before* scheduler.step() so we log the LR used for this
+                # step, not the next. (scheduler.step() updates LR for the next step.)
+                self._last_step_lr = get_effective_lr(self.lr_scheduler)
                 self.lr_scheduler.step()
 
                 stepped = True
@@ -881,14 +959,33 @@ class Trainer(StatefulObjectBag):
 
         # check
         # ── Count tokens processed in this step (for milestone tracking) ──
-        step_sentences = 0
-        for batch in batches:
-            # LCM batches are EmbeddingsBatch with seqs shape [batch, seq_len, embed_dim]
-            if hasattr(batch, 'seqs') and batch.seqs is not None:
-                step_sentences += batch.seqs.shape[0] * batch.seqs.shape[1]
-            elif hasattr(batch, 'source_seqs') and batch.source_seqs is not None:
-                step_sentences += batch.source_seqs.shape[0] * batch.source_seqs.shape[1]
-        step_tokens = int(step_sentences * self.config.tokens_per_sentence * self.gang.size)
+        if num_targets > 0:
+            total_targets = torch.tensor(
+                num_targets, device=self.gang.device, dtype=torch.int64
+            )
+            self.gang.all_reduce(total_targets, ReduceOperation.SUM)
+            step_tokens = int(
+                total_targets.item() * self.config.tokens_per_sentence
+            )
+        else:
+            # Fallback: count from batch structure (e.g. LCMInput, EmbeddingsBatch)
+            step_sentences = 0
+            for batch in batches:
+                if hasattr(batch, "source") and batch.source is not None:
+                    step_sentences += sum(elem.shape[0] for elem in batch.source)
+                    if getattr(batch, "target", None) is not None:
+                        step_sentences += sum(
+                            elem.shape[0] for elem in batch.target
+                        )
+                elif hasattr(batch, "seqs") and batch.seqs is not None:
+                    step_sentences += batch.seqs.shape[0] * batch.seqs.shape[1]
+            total_sentences = torch.tensor(
+                step_sentences, device=self.gang.device, dtype=torch.int64
+            )
+            self.gang.all_reduce(total_sentences, ReduceOperation.SUM)
+            step_tokens = int(
+                total_sentences.item() * self.config.tokens_per_sentence
+            )
         self.total_tokens_seen += step_tokens
 
         del batches
@@ -967,7 +1064,10 @@ class Trainer(StatefulObjectBag):
         return grad_norm, raw_grad_norm
 
     def _should_validate(self) -> bool:
-        return self._should_do(self.config.validate_every_n_steps)
+        base = self._should_do(self.config.validate_every_n_steps)
+        if self.config.lr_sweep_mode:
+            return base and (self.step_nr >= self._tail_start_step)
+        return base
 
     def _should_collect_garbage(self) -> bool:
         return self._should_do(self.config.gc_every_n_steps)
@@ -1017,7 +1117,13 @@ class Trainer(StatefulObjectBag):
                 self._valid_step_time += step_stopwatch.get_elapsed_time()
                 self.valid_metric_bag[batch.name].update([loss])
 
-        self._publish_validation_metrics()
+        val_values = self._publish_validation_metrics()
+
+        # Collect tail validation losses for LR sweep mode (rank-0 only)
+        if self.config.lr_sweep_mode and self.gang.rank == 0:
+            for _name, val in val_values.items():
+                if val and "loss" in val:
+                    self._tail_val_losses.append(float(val["loss"]))
 
         logger.info(
             f"R{self.gang.rank} Validation complete in {step_nr} steps, resuming training."
@@ -1056,7 +1162,7 @@ class Trainer(StatefulObjectBag):
 
         assert values is not None
 
-        values["lr"] = get_effective_lr(self.lr_scheduler)
+        values["lr"] = self._last_step_lr
 
         self._set_elements_per_second(values, self._train_step_time)
 
@@ -1070,15 +1176,17 @@ class Trainer(StatefulObjectBag):
 
         self._train_step_time = 0.0
 
-    def _publish_validation_metrics(self) -> None:
-        values = {}
+    def _publish_validation_metrics(self) -> Dict[str, Dict[str, Any]]:
+        """Publish validation metrics and return computed values (rank-0 only)."""
+        values: Dict[str, Dict[str, Any]] = {}
         for name, metric_bag in self.valid_metric_bag.items():
             values[name] = metric_bag.sync_and_compute_metrics()
             metric_bag.reset_non_persistent_metrics()
 
         # Only rank-0 to record and publish
         if self.gang.rank != 0:
-            return
+            self._valid_step_time = 0.0
+            return {}
 
         for name, val in values.items():
             assert val is not None
@@ -1090,6 +1198,7 @@ class Trainer(StatefulObjectBag):
 
         # reset timers
         self._valid_step_time = 0.0
+        return values
 
     def _should_checkpoint(self) -> bool:
         return self._should_do(self.config.checkpoint_every_n_steps)

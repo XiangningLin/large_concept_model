@@ -432,39 +432,6 @@ class DataLoadingConfig:
     ``batch_size`` to reduce the memory footprint.
     """
 
-    len_to_wrap_long_seq: Optional[int] = None
-    """
-    Wrapping a source sequences to the length of `len_to_wrap_long_seq`.
-    For instance, for a `len_to_wrap_long_seq=2`
-    batch = {
-        "source": [["v1", "v2", "v3", "v4", "v5"], ["u1", "u2", "u3"], ["w1"]],
-    }
-    will be transormed to
-    1. if packing is False :
-    batch = {
-        "source": [['v1', 'v2'], ['v3', 'v4'], ['v5'], ["u1", "u2"], ["u3"], ["w1"]]
-    }
-    1. if packing is True :
-    batch = {
-        "source": [['v1', 'v2'], ['v3', 'v4'], ['v5', 'u1'], ["u2", "u3"], ["w1"]]
-    }
-
-    Note: currently only allowed to be used with no "target" provided (unsupervised style) !
-    """
-
-    packing: bool = False
-    """
-    If True, all sequential documents (seqs of sentences) will be concated into one big document
-    before applying wrapping.
-    This will result in all samples (except maybe one) having exactly `len_to_wrap_long_seq` length !
-    """
-
-    wrap_before_affixing: bool = False
-    """
-    If True, we will wrap the sequences before adding the source prefix/suffix.
-    Recommended when pre-training with packed data i.e len_to_wrap_long_seq not None and packing=True
-    """
-
     max_sentence_len_in_doc: Optional[int] = None
     """
     Remove samples (documents) whose `source_text_column` contains at least one sentence of len > `max_sentence_len_in_doc`.
