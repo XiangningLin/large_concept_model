@@ -21,7 +21,7 @@ python get_refresh_token.py <你的client_id>
 - 将授权页显示的 code 粘贴回终端
 - 复制输出的 **refresh_token**，存入 VastAI 环境变量 `GLOBUS_REFRESH_TOKEN`
 
-**注意**：脚本已包含 NCSA Delta 的 data_access scope；若 transfer 报 ConsentRequired，需重新运行本步骤获取新 token。
+**注意**：脚本已包含 NCSA Delta 的 data_access scope；若 transfer 报 ConsentRequired，先到 [app.globus.org](https://app.globus.org) 用同账号打开 Delta endpoint 并连接/激活，再重新运行本步骤获取新 token。
 
 **注意**：若后续 transfer 报错需 client_secret，则改用 Confidential App，并同时保存 `GLOBUS_CLIENT_SECRET`。
 
@@ -55,7 +55,18 @@ bash prepare_gcp_creds.sh
 ## 步骤 4：查 Endpoint UUID（可选）
 
 - **NCSA Delta**：在 [app.globus.org/endpoints](https://app.globus.org/endpoints) 搜索 "NCSA Delta"，记下 UUID（默认已内置）
+- **ACCESS Delta**：若为 ACCESS 分配（如 bfaq 项目），搜索 "ACCESS Delta" 获取 UUID，并设置 `GLOBUS_DEST_ENDPOINT`
 - **VastAI 侧**：`prepare_gcp_creds.sh` 会输出；也可不填，脚本会从还原的 `~/.globusonline` 自动检测
+
+## ConsentRequired 诊断
+
+若反复出现 ConsentRequired，可运行 `diagnose_consent.py` 查看 API 返回的 `required_scopes` 及 endpoint 信息：
+
+```bash
+export GLOBUS_REFRESH_TOKEN="你的token"
+export GLOBUS_CLIENT_ID="你的client_id"
+python diagnose_consent.py
+```
 
 ## VastAI 环境变量汇总（上限 16 个）
 

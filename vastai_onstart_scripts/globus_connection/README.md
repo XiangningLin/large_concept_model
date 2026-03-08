@@ -70,7 +70,15 @@
 
 ## ConsentRequired 错误
 
-若 transfer 报 `ConsentRequired: You must grant consent for the destination endpoint`，说明当前 refresh token 未包含 NCSA Delta 的 data_access 授权。需**重新运行** `get_refresh_token.py` 获取新 token（脚本已包含 Delta data_access scope），并将新 token 更新到 VastAI 环境变量。
+若 transfer 报 `ConsentRequired: You must grant consent for the destination endpoint`，按以下步骤排查：
+
+1. **先通过 app.globus.org 建立 consent**：用与 GLOBUS_REFRESH_TOKEN 相同的 Globus 账号登录 [app.globus.org](https://app.globus.org)，搜索 "Delta" 或 "NCSA Delta"/"ACCESS Delta"，打开对应 endpoint，点击连接/激活（首次需完成此步骤以建立 consent）。
+
+2. **确认 endpoint 类型**：若为 ACCESS 分配（如 bfaq 项目），应使用 **ACCESS Delta**；若为 NCSA/UIUC 分配，使用 **NCSA Delta**。两者 UUID 不同，可在 [app.globus.org/endpoints](https://app.globus.org/endpoints) 搜索确认。
+
+3. **重新获取 token**：运行 `get_refresh_token.py`（已包含 data_access scope），用其打印的 URL 完成授权，将新 refresh_token 更新到 VastAI。
+
+4. **本地诊断**：在 Delta 登录节点或本地运行 `local_prep/diagnose_consent.py`，可查看 API 返回的 `required_scopes` 及 endpoint 信息，便于进一步排查。
 
 ## 安全
 
@@ -79,7 +87,7 @@
 
 ## Delta Endpoint
 
-NCSA Delta 的 Globus endpoint UUID 可在 [Globus Endpoint Search](https://app.globus.org/endpoints) 或 NCSA 文档中查询。默认使用 `2d66a243-4a3f-4578-9d7f-1935fb5fba8f`，如有变更请设置 `GLOBUS_DEST_ENDPOINT`。
+Delta 有 **NCSA Delta** 与 **ACCESS Delta** 两个 collection，分别对应 NCSA 身份与 ACCESS 身份。默认使用 `2d66a243-4a3f-4578-9d7f-1935fb5fba8f`（NCSA Delta）。若为 ACCESS 分配，请在 [app.globus.org/endpoints](https://app.globus.org/endpoints) 搜索 "ACCESS Delta" 获取正确 UUID，并设置 `GLOBUS_DEST_ENDPOINT`。
 
 ## 兼容性
 
