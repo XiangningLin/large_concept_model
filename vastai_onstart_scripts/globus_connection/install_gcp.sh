@@ -55,8 +55,8 @@ if [ -z "$GCP_DIR" ] || [ ! -f "$GCP_DIR/globusconnectpersonal" ]; then
     exit 1
 fi
 
-GCP_BIN="$GCP_DIR/globusconnectpersonal"
-cd "$GCP_DIR"
+GCP_BIN="$GCP_INSTALL_DIR/$GCP_DIR/globusconnectpersonal"
+cd "$GCP_INSTALL_DIR/$GCP_DIR"
 
 # Configure accessible paths - GCP only allows paths listed in config-paths
 CONFIG_PATHS="$HOME/.globusonline/lta/config-paths"
