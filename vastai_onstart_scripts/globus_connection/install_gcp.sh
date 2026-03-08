@@ -47,6 +47,17 @@ if [ ! -d "$GCP_USER_HOME/.globusonline" ]; then
 fi
 chown -R "$GCP_USER:$GCP_USER" "$GCP_USER_HOME/.globusonline"
 
+# 替换凭证包中的硬编码路径（prepare 时若 home 为 /u/jlyu3 等，配置会写入该路径）
+# 可通过 GLOBUS_CREDS_OLD_HOME 自定义原路径，默认 /u/jlyu3
+CREDS_OLD_HOME="${GLOBUS_CREDS_OLD_HOME:-/u/jlyu3}"
+if [ "$CREDS_OLD_HOME" != "$GCP_USER_HOME" ] && grep -rq "$CREDS_OLD_HOME" "$GCP_USER_HOME/.globusonline" 2>/dev/null; then
+    echo "[Globus] Patching config: $CREDS_OLD_HOME -> $GCP_USER_HOME"
+    grep -rl "$CREDS_OLD_HOME" "$GCP_USER_HOME/.globusonline" 2>/dev/null | while read -r f; do
+        sed -i "s|$CREDS_OLD_HOME|$GCP_USER_HOME|g" "$f" 2>/dev/null || true
+    done
+fi
+chown -R "$GCP_USER:$GCP_USER" "$GCP_USER_HOME/.globusonline"
+
 # Download and extract GCP binary
 mkdir -p "$GCP_INSTALL_DIR"
 cd "$GCP_INSTALL_DIR"
@@ -99,24 +110,9 @@ chown -R "$GCP_USER:$GCP_USER" "$GCP_USER_HOME/.globusonline"
 mkdir -p "$ACCESSIBLE_DIR"
 chmod 755 "$ACCESSIBLE_DIR" 2>/dev/null || true
 
-# ========== DEBUG: 定位 HOME 错误根源 ==========
-echo "[Globus DEBUG] === 关键变量 ==="
-echo "[Globus DEBUG] GCP_USER_HOME=$GCP_USER_HOME"
-echo "[Globus DEBUG] globus passwd: $(getent passwd "$GCP_USER" 2>/dev/null || echo 'N/A')"
-echo "[Globus DEBUG] globus 的 HOME(来自passwd): $(getent passwd "$GCP_USER" 2>/dev/null | cut -d: -f6 || echo 'N/A')"
-echo "[Globus DEBUG] GCP_BIN=$GCP_BIN"
-echo "[Globus DEBUG] GCP 文件类型: $(file "$GCP_BIN" 2>/dev/null || echo 'N/A')"
-echo "[Globus DEBUG] GCP 前5行:"
-head -5 "$GCP_BIN" 2>/dev/null || true
-echo "[Globus DEBUG] 测试 runuser 下 Python 看到的 HOME:"
-runuser -u "$GCP_USER" -- /bin/bash -c "export HOME='$GCP_USER_HOME'; python3 -c \"import os; print('[Globus DEBUG]   env HOME:', repr(os.environ.get('HOME'))); print('[Globus DEBUG]   expanduser ~:', repr(os.path.expanduser('~')))\"" 2>/dev/null || echo "[Globus DEBUG]   (python3 测试失败)"
-echo "[Globus DEBUG] 当前脚本的 HOME(调用者): $HOME"
-echo "[Globus DEBUG] ========================"
-
 # Stop any existing instance, then start as globus user
-# 使用 -dir 显式指定配置目录，绕过 HOME/env 问题（GCP 官方支持）
+# 使用 -dir 显式指定配置目录（GCP 官方支持）
 GCP_CONFIG_DIR="$GCP_USER_HOME/.globusonline"
-echo "[Globus DEBUG] 使用 -dir $GCP_CONFIG_DIR 启动 GCP"
 runuser -u "$GCP_USER" -- "$GCP_BIN" -dir "$GCP_CONFIG_DIR" -stop 2>/dev/null || true
 sleep 2
 echo "[Globus] Starting GCP as user $GCP_USER (-dir=$GCP_CONFIG_DIR)..."

@@ -64,6 +64,10 @@
 
 - `globus-sdk`（transfer.py 需要）：`pip install globus-sdk`
 
+## 凭证路径修补
+
+若本地 prepare 时 home 为 `/u/xxx` 等，而 VastAI 上使用 `/home/globus`，install_gcp.sh 会自动将配置中的 `/u/xxx` 替换为 `/home/globus`。若原路径不同，可设置 `GLOBUS_CREDS_OLD_HOME`（如 `/home/jlyu3`）。
+
 ## 安全
 
 - 不要将 `GLOBUS_REFRESH_TOKEN`、`GLOBUS_CREDS_B64` 等写入代码或公开仓库
