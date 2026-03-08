@@ -208,6 +208,11 @@ done
 
 # ========== Part 6: Globus 传输到 Delta（可选）==========
 # 仅当 GLOBUS_REFRESH_TOKEN、GLOBUS_CLIENT_ID 已设置且 globus_connection 模块存在时执行
+echo "[Part6 DEBUG] Globus 传输条件检查:"
+echo "  - GLOBUS_REFRESH_TOKEN: $([ -n "${GLOBUS_REFRESH_TOKEN}" ] && echo "已设置(len=${#GLOBUS_REFRESH_TOKEN})" || echo "未设置(空)")"
+echo "  - GLOBUS_CLIENT_ID:     $([ -n "${GLOBUS_CLIENT_ID}" ] && echo "已设置(${GLOBUS_CLIENT_ID:0:8}...)" || echo "未设置(空)")"
+echo "  - GLOBUS_DIR:          $([ -n "${GLOBUS_DIR}" ] && echo "已设置(${GLOBUS_DIR})" || echo "未设置(空)")"
+echo "  - transfer.py 存在:    $([ -n "${GLOBUS_DIR}" ] && [ -f "${GLOBUS_DIR}/transfer.py" ] && echo "是" || echo "否")"
 if [ -n "${GLOBUS_REFRESH_TOKEN}" ] && [ -n "${GLOBUS_CLIENT_ID}" ] && [ -n "${GLOBUS_DIR}" ] && [ -f "${GLOBUS_DIR}/transfer.py" ]; then
     echo "======================================"
     echo "通过 Globus 传输到 Delta"
@@ -217,6 +222,8 @@ if [ -n "${GLOBUS_REFRESH_TOKEN}" ] && [ -n "${GLOBUS_CLIENT_ID}" ] && [ -n "${G
     # GCP 以 globus 用户运行，凭证在 /home/globus/.globusonline；设置 HOME 以便 transfer.py 找到 endpoint
     chmod -R a+rX "${OUTPUT_DIR}" 2>/dev/null || true
     HOME=/home/globus .venv/bin/python "${GLOBUS_DIR}/transfer.py" || echo "⚠️ Globus 传输提交失败"
+else
+    echo "[Part6] 跳过 Globus 传输（条件不满足）。需在 VastAI 环境变量中设置 GLOBUS_REFRESH_TOKEN 和 GLOBUS_CLIENT_ID"
 fi
 
 # ========== Part 7: 原 Delta SSH 推送（已弃用，保留注释）==========
