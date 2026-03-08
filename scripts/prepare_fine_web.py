@@ -50,7 +50,8 @@ def prepare_fine_web(
     rank: int = None,  # 当前进程 rank，0 <= rank < num_shards；默认从 RANK 环境变量或 0
     shard_id: int = None,  # 同 rank，兼容 --shard_id 用法
     num_shards: int = None,  # 总进程数（限制器），默认从 WORLD_SIZE 环境变量或 1
-    batch_size: int = 10,
+    batch_size: int = 64,
+    sonar_batch_size: int = 256,
     max_sentence_length: int = 256,
     add_split_column: bool = True,
     train_ratio: float = 0.8,
@@ -65,7 +66,9 @@ def prepare_fine_web(
         output_dir: 输出目录
         num_samples: 要处理的样本数量，None 表示处理整个数据集（默认: 100）
         start_index: 起始索引（用于多GPU并行）
-        batch_size: 批处理大小（用于SONAR编码）
+        batch_size: 文档级批大小，即积累多少篇文档后触发一次 SONAR 编码（默认: 64）
+        sonar_batch_size: SONAR 内部 GPU 句子批大小，传给 predict(batch_size=...)（默认: 256）
+                         越大 GPU 利用率越高，A100-40GB 建议 256～512
         max_sentence_length: 最大句子长度
         add_split_column: 是否添加 split 列用于 train/validation 分区（默认: True）
         train_ratio: 训练数据比例，当 add_split_column=True 时使用（默认: 0.8，即 80% 训练，20% 验证）
@@ -386,7 +389,8 @@ def prepare_fine_web(
         stream = islice(stream, existing_samples, None)
 
     # 收集处理后的数据
-    all_data = []
+    # 注意：如果启用检查点，all_data 仅用于非检查点路径；检查点路径不在内存中积累数据
+    all_data = []  # 仅在未启用检查点时使用
     processed = 0
     last_processed_index = start_index - 1  # 记录最后处理的索引
     current_checkpoint_data = []  # 当前检查点的数据（累积到 checkpoint_interval）
@@ -542,315 +546,255 @@ def prepare_fine_web(
                 'dataset_index': dataset_idx,
             })
             
-            # 批量编码
+            # 批量编码：积累足够文档后，跨文档拍平送入 SONAR（仿 SentenceSSM SonarEmbedder）
             if len(batch_texts) >= batch_size:
-                # 处理这一批
-                for i, sents in enumerate(batch_texts):
-                    try:
-                        # 编码句子
-                        embeddings = sonar_pipeline.predict(
-                            sents,
-                            source_lang="eng_Latn"
-                        )
-                        
-                        # 🔍 Validate embeddings format (only for first successfully processed sample)
-                        if processed == 0:  # Only print for the first sample
+                try:
+                    # ── 步骤1：跨文档拍平所有句子 ──
+                    all_sents_flat = [s for doc_sents in batch_texts for s in doc_sents]
+                    doc_lengths = [len(doc_sents) for doc_sents in batch_texts]
+
+                    # ── 步骤2：一次性送入 SONAR，内部按 sonar_batch_size 自动分批，不会 OOM ──
+                    all_embeddings_flat = sonar_pipeline.predict(
+                        all_sents_flat,
+                        source_lang="eng_Latn",
+                        batch_size=sonar_batch_size,
+                    )  # shape: [sum(doc_lengths), 1024]
+
+                    # ── 步骤3：按文档长度切分回各自的 embeddings ──
+                    idx = 0
+                    for i, length in enumerate(doc_lengths):
+                        embeddings = all_embeddings_flat[idx:idx + length]  # [N_sents, 1024]
+                        idx += length
+                        sents = batch_texts[i]
+
+                        # 🔍 首样本校验
+                        if processed == 0:
                             print(f"\n🔍 [Validation] First sample embeddings info:", flush=True)
                             print(f"   - embeddings type: {type(embeddings)}", flush=True)
                             print(f"   - embeddings shape: {embeddings.shape if hasattr(embeddings, 'shape') else 'N/A'}", flush=True)
                             if hasattr(embeddings, 'cpu'):
                                 emb_numpy = embeddings.cpu().numpy()
-                                print(f"   - numpy array type: {type(emb_numpy)}", flush=True)
-                                print(f"   - numpy array shape: {emb_numpy.shape}", flush=True)
-                                print(f"   - numpy array dtype: {emb_numpy.dtype}", flush=True)
-                                print(f"   - type after converting to list: {type(emb_numpy.tolist())}", flush=True)
-                                print(f"   - list length: {len(emb_numpy.tolist())}", flush=True)
-                                if len(emb_numpy.tolist()) > 0:
-                                    print(f"   - list[0] type: {type(emb_numpy.tolist()[0])}", flush=True)
-                                    if isinstance(emb_numpy.tolist()[0], list):
-                                        print(f"   - list[0] length: {len(emb_numpy.tolist()[0])}", flush=True)
-                            sys.stdout.flush()  # Force flush output buffer
-                        
-                        # 保存数据（记录当前处理的索引）
+                                print(f"   - numpy dtype: {emb_numpy.dtype}, shape: {emb_numpy.shape}", flush=True)
+                            sys.stdout.flush()
+
                         dataset_idx = batch_originals[i].get('dataset_index', start_index + processed)
-                        
-                        # 准备数据字典
                         sample_data = {
                             'text_sentences': sents,
                             'text_sentences_sonar_emb': embeddings.cpu().numpy(),
                             'url': batch_originals[i]['url'],
                             'timestamp': batch_originals[i]['timestamp'],
                         }
-                        
                         processed += 1
-                        last_processed_index = dataset_idx  # 使用数据集中的实际索引
+                        last_processed_index = dataset_idx
                         pbar.update(1)
-                        
-                        # 如果启用检查点，将数据添加到当前检查点；否则直接添加到 all_data
+
                         if use_checkpoints:
                             current_checkpoint_data.append(sample_data)
-                            
-                            # 达到检查点间隔，保存检查点
                             if len(current_checkpoint_data) >= checkpoint_interval:
                                 save_checkpoint(current_checkpoint_data, next_checkpoint_number)
-                                save_metadata()  # 与checkpoint同步保存metadata
-                                # 将检查点数据添加到 all_data（用于最终合并）
-                                all_data.extend(current_checkpoint_data)
-                                current_checkpoint_data = []  # 清空当前检查点
+                                save_metadata()
+                                current_checkpoint_data = []
                                 next_checkpoint_number += 1
                         else:
-                            # 未启用检查点，直接添加到 all_data
                             all_data.append(sample_data)
-                        
-                    except Exception as e:
-                        print(f"\n⚠️  Processing failed: {str(e)}")
-                        continue
-                
+
+                except Exception as e:
+                    print(f"\n⚠️  Batch processing failed: {str(e)}")
+
                 batch_texts = []
                 batch_originals = []
         
-        # 处理剩余的数据
+        # 处理循环结束后的尾部剩余文档（不足一个 batch_size 的部分）
         if batch_texts and (process_all or processed < num_samples):
-            for i, sents in enumerate(batch_texts):
-                if not process_all and processed >= num_samples:
-                    break
-                try:
-                    embeddings = sonar_pipeline.predict(
-                        sents,
-                        source_lang="eng_Latn"
-                    )
-                    
-                    # 🔍 Validate embeddings format (remaining data)
-                    if processed == 0 and len(all_data) == 0:  # Only print for the first sample
-                        print(f"\n🔍 [Validation] Remaining data first sample embeddings info:", flush=True)
-                        print(f"   - embeddings type: {type(embeddings)}", flush=True)
-                        print(f"   - embeddings shape: {embeddings.shape if hasattr(embeddings, 'shape') else 'N/A'}", flush=True)
-                        if hasattr(embeddings, 'cpu'):
-                            emb_numpy = embeddings.cpu().numpy()
-                            print(f"   - numpy array type: {type(emb_numpy)}", flush=True)
-                            print(f"   - numpy array shape: {emb_numpy.shape}", flush=True)
-                        sys.stdout.flush()  # Force flush output buffer
-                    
-                    # 保存数据（记录当前处理的索引）
+            # 同样拍平送入 SONAR，与主循环逻辑一致
+            try:
+                # 截断到 num_samples 限制
+                if not process_all:
+                    remaining = num_samples - processed
+                    batch_texts = batch_texts[:remaining]
+                    batch_originals = batch_originals[:remaining]
+
+                all_sents_flat = [s for doc_sents in batch_texts for s in doc_sents]
+                doc_lengths = [len(doc_sents) for doc_sents in batch_texts]
+
+                all_embeddings_flat = sonar_pipeline.predict(
+                    all_sents_flat,
+                    source_lang="eng_Latn",
+                    batch_size=sonar_batch_size,
+                )  # shape: [sum(doc_lengths), 1024]
+
+                idx = 0
+                for i, length in enumerate(doc_lengths):
+                    embeddings = all_embeddings_flat[idx:idx + length]
+                    idx += length
+                    sents = batch_texts[i]
+
                     dataset_idx = batch_originals[i].get('dataset_index', start_index + processed)
-                    
-                    # 准备数据字典
                     sample_data = {
                         'text_sentences': sents,
                         'text_sentences_sonar_emb': embeddings.cpu().numpy(),
                         'url': batch_originals[i]['url'],
                         'timestamp': batch_originals[i]['timestamp'],
                     }
-                    
                     processed += 1
-                    last_processed_index = dataset_idx  # 使用数据集中的实际索引
+                    last_processed_index = dataset_idx
                     pbar.update(1)
-                    
-                    # 如果启用检查点，将数据添加到当前检查点；否则直接添加到 all_data
+
                     if use_checkpoints:
                         current_checkpoint_data.append(sample_data)
-                        
-                        # 达到检查点间隔，保存检查点
                         if len(current_checkpoint_data) >= checkpoint_interval:
                             save_checkpoint(current_checkpoint_data, next_checkpoint_number)
-                            save_metadata()  # 与checkpoint同步保存metadata
-                            # 将检查点数据添加到 all_data（用于最终合并）
-                            all_data.extend(current_checkpoint_data)
-                            current_checkpoint_data = []  # 清空当前检查点
+                            save_metadata()
+                            current_checkpoint_data = []
                             next_checkpoint_number += 1
                     else:
-                        # 未启用检查点，直接添加到 all_data
                         all_data.append(sample_data)
-                    
-                except Exception as e:
-                    print(f"\n⚠️  Processing failed: {str(e)}")
-                    continue
+
+            except Exception as e:
+                print(f"\n⚠️  Tail batch processing failed: {str(e)}")
     
     # 如果启用检查点，处理剩余的检查点数据
     if use_checkpoints and current_checkpoint_data:
         print(f"\n💾 保存最后一个检查点（剩余 {len(current_checkpoint_data)} 个样本）...")
         save_checkpoint(current_checkpoint_data, next_checkpoint_number)
         save_metadata()  # 与checkpoint同步保存metadata
-        all_data.extend(current_checkpoint_data)
+        # 检查点已写入磁盘，清空内存
         current_checkpoint_data = []
         next_checkpoint_number += 1
     
-    # 如果启用检查点，从检查点文件合并数据（而不是使用 all_data）
+    # =========================================================================
+    # 🔍 最终输出：检查点分片模式 vs 单文件模式
+    # =========================================================================
+    # LCM 的 define_parquet_dataset() 使用 pq.ParquetDataset(parquet_path, ...)，
+    # 该 API 原生支持目录路径，会自动读取目录下所有 .parquet 文件。
+    # 因此，当使用检查点功能时，我们直接将检查点文件 rename 到输出目录作为分片，
+    # 完全避免将所有数据合并到单个大文件（会导致 OOM 和 list index overflow）。
+    # =========================================================================
+
     if use_checkpoints:
-        print(f"\n🔄 合并所有检查点文件为最终输出...")
-        # 读取所有检查点文件（包括已存在的和新保存的）
+        # ── 检查点分片模式：将检查点文件直接作为最终分片 ──
         all_checkpoint_files = sorted(checkpoint_dir.glob("data_checkpoint_*.parquet"))
         if all_checkpoint_files:
-            print(f"   找到 {len(all_checkpoint_files)} 个检查点文件")
-            checkpoint_tables = []
-            for ckpt_file in all_checkpoint_files:
+            print(f"\n 检查点分片模式：将 {len(all_checkpoint_files)} 个检查点文件作为最终分片输出")
+            print(f"   （跳过合并，避免 OOM 和 PyArrow list index overflow）")
+            
+            total_rows = 0
+            shard_paths = []
+            for i, ckpt_file in enumerate(all_checkpoint_files):
+                shard_path = output_path / f"data_{i:06d}.parquet"
                 try:
-                    ckpt_table = pq.read_table(ckpt_file)
-                    checkpoint_tables.append(ckpt_table)
-                    print(f"   - {ckpt_file.name}: {len(ckpt_table):,} 个样本")
+                    ckpt_file.rename(shard_path)
+                    # 用轻量方式读取行数（不加载列数据）
+                    pf_meta = pq.read_metadata(shard_path)
+                    shard_rows = pf_meta.num_rows
+                    total_rows += shard_rows
+                    shard_paths.append(shard_path)
+                    print(f"   ✅ {ckpt_file.name} → {shard_path.name} ({shard_rows:,} 行)")
                 except Exception as e:
-                    print(f"   ⚠️  读取检查点文件 {ckpt_file.name} 失败: {e}")
+                    print(f"   ⚠️  处理 {ckpt_file.name} 失败: {e}")
             
-            if checkpoint_tables:
-                # 合并所有检查点
-                new_table = pa.concat_tables(checkpoint_tables)
-                print(f"   ✅ 合并完成，总计 {len(new_table):,} 个样本")
-            else:
-                # 如果没有检查点文件，使用 all_data（这种情况不应该发生）
-                print("   ⚠️  没有找到检查点文件，使用内存中的数据")
-                # 继续使用原来的逻辑处理 all_data
-                new_table = None
+            # 更新并保存 metadata
+            save_metadata()
+            
+            print(f"\n🔍 [Validation] Sharded output validation:")
+            print(f"   - Total shards: {len(shard_paths)}")
+            print(f"   - Total rows:   {total_rows:,}")
+            
+            # 验证第一个分片的 schema（轻量读取）
+            if shard_paths:
+                try:
+                    pf = pq.ParquetFile(shard_paths[0])
+                    first_batch = pf.read_row_group(0)
+                    print(f"   - Columns: {first_batch.column_names}")
+                    if 'text_sentences_sonar_emb' in first_batch.column_names:
+                        emb_type = first_batch.schema.field('text_sentences_sonar_emb').type
+                        print(f"   - text_sentences_sonar_emb type: {emb_type}")
+                except Exception as e:
+                    print(f"   ⚠️  Schema validation failed: {e}")
+            
+            print("\n" + "=" * 80)
+            print("✅ 处理完成！（分片输出模式）")
+            print("=" * 80)
+            print(f"📁 输出目录: {output_path}")
+            print(f"📦 总分片数: {len(shard_paths)}")
+            print(f"📊 总样本数: {total_rows:,}")
+            print(f"💡 LCM 读取方式: pq.ParquetDataset('{output_path}') 自动读取所有分片")
+            print("\n📝 提示:")
+            print("   多卡运行时，datacard 将在所有任务完成后统一更新")
+            print("   如需手动更新，请运行:")
+            print(f"   python scripts/update_datacards.py --output_dir={output_dir} --dataset_name={DATASET_NAME}")
+            print("=" * 80)
+            return  # 分片模式直接返回，无需后续的单文件写入
         else:
-            # 没有检查点文件，使用 all_data
-            print("   ⚠️  没有找到检查点文件，使用内存中的数据")
-            new_table = None
-    else:
-        # 未启用检查点，使用原来的逻辑
-        new_table = None
+            print("   ⚠️  没有找到检查点文件，回退到单文件模式...")
     
-    # 如果 new_table 为 None（未启用检查点或检查点合并失败），使用 all_data 创建 table
-    if new_table is None:
-        # 添加 split 列（如果启用）
-        # 注意：如果是从断点恢复，需要基于总样本数（包括已存在的）来分配 split
-        if add_split_column:
-            import random
-            random.seed(seed)
-            
-            # 计算总样本数（包括已存在的）
-            total_existing = existing_samples if existing_data is not None else 0
-            total_new = len(all_data)
-            total_samples = total_existing + total_new
-            
-            # 如果是从断点恢复，需要确保 split 分配的一致性
-            # 使用全局索引来分配 split，确保恢复后的一致性
-            train_size = int(total_samples * train_ratio)
-            
-            # 随机打乱全局索引
-            indices = list(range(total_samples))
-            random.shuffle(indices)
-            train_indices = set(indices[:train_size])
-            
-            # 只为新数据分配 split（已存在的数据应该已经有 split 了）
-            for i in range(total_new):
-                global_idx = total_existing + i
-                if global_idx in train_indices:
-                    all_data[i]['split'] = 'train'
-                else:
-                    all_data[i]['split'] = 'validation'
-            
-            new_train = sum(1 for d in all_data if d.get('split') == 'train')
-            new_val = len(all_data) - new_train
-            print(f"\n✅ Added split column to new data: {new_train} train, {new_val} validation")
-            if total_existing > 0:
-                print(f"   (Total: {total_samples:,} samples, {train_size:,} train, {total_samples - train_size:,} validation)")
+    # ── 单文件模式（未使用检查点，或检查点文件丢失时的回退）──
+    # 添加 split 列（如果启用）
+    if add_split_column:
+        import random
+        random.seed(seed)
         
-        # Save as Parquet file
-        print(f"\n💾 Saving data to {output_dir}/data.parquet ...")
+        total_existing = existing_samples if existing_data is not None else 0
+        total_new = len(all_data)
+        total_samples = total_existing + total_new
+        train_size = int(total_samples * train_ratio)
         
-        # 🔍 Validate data format (before conversion)
-        if len(all_data) > 0:
-            print(f"\n🔍 [Validation] Data format before conversion:")
-            first_emb = all_data[0]['text_sentences_sonar_emb']
-            print(f"   - all_data[0]['text_sentences_sonar_emb'] type: {type(first_emb)}")
-            print(f"   - all_data[0]['text_sentences_sonar_emb'] shape: {first_emb.shape if hasattr(first_emb, 'shape') else 'N/A'}")
-            print(f"   - type after converting to list: {type(first_emb.tolist())}")
-            print(f"   - list length: {len(first_emb.tolist())}")
-            if len(first_emb.tolist()) > 0:
-                print(f"   - list[0] type: {type(first_emb.tolist()[0])}")
-                if isinstance(first_emb.tolist()[0], (list, np.ndarray)):
-                    print(f"   - list[0] length: {len(first_emb.tolist()[0])}")
+        indices = list(range(total_samples))
+        random.shuffle(indices)
+        train_indices = set(indices[:train_size])
         
-        # Convert embeddings to fixed_size_list format (PyArrow compatible)
-        text_sentences_list = [d['text_sentences'] for d in all_data]
-        all_embeddings = [d['text_sentences_sonar_emb'] for d in all_data]  # List of numpy arrays
-        text_sentences_sonar_emb_pa = nested_numpy_to_pyarrow(all_embeddings)  # Creates list<fixed_size_list[1024]>
+        for i in range(total_new):
+            global_idx = total_existing + i
+            all_data[i]['split'] = 'train' if global_idx in train_indices else 'validation'
         
-        # 🔍 Validate converted format
-        if len(all_embeddings) > 0:
-            print(f"\n🔍 [Validation] Converted format:")
-            print(f"   - text_sentences_sonar_emb_pa type: {text_sentences_sonar_emb_pa.type}", flush=True)
-            print(f"   - Is value_type fixed_size_list? {pa.types.is_fixed_size_list(text_sentences_sonar_emb_pa.type.value_type) if pa.types.is_list(text_sentences_sonar_emb_pa.type) else False}", flush=True)
-            if pa.types.is_list(text_sentences_sonar_emb_pa.type) and pa.types.is_fixed_size_list(text_sentences_sonar_emb_pa.type.value_type):
-                print(f"   - Fixed size: {text_sentences_sonar_emb_pa.type.value_type.list_size}", flush=True)
-            sys.stdout.flush()
-        
-        # 创建新数据的 table
-        new_table = pa.table({
-            'text_sentences': text_sentences_list,
-            'text_sentences_sonar_emb': text_sentences_sonar_emb_pa,
-            'url': [d['url'] for d in all_data],
-            'timestamp': [d['timestamp'] for d in all_data],
-            'split': [d.get('split', 'train') for d in all_data],  # Add split column, default to 'train'
-        })
-    else:
-        # 如果使用检查点合并的 new_table，直接使用它（split 列已经在检查点中处理了）
-        print(f"\n💾 使用检查点合并的数据，保存到 {output_dir}/data.parquet ...")
+        new_train = sum(1 for d in all_data if d.get('split') == 'train')
+        new_val = len(all_data) - new_train
+        print(f"\n✅ Added split column: {new_train} train, {new_val} validation")
+
+    print(f"\n💾 Saving data to {output_path}/data.parquet ...")
     
-    # 如果存在旧数据且未使用检查点，合并新旧数据
-    # 注意：如果使用检查点，existing_data 已经包含了所有检查点数据，new_table 也是从检查点合并的，所以不需要再合并
-    if existing_data is not None and not use_checkpoints:
-        print(f"\n🔄 合并新旧数据...")
-        print(f"   - 已存在样本: {existing_samples:,}")
-        print(f"   - 新处理样本: {len(new_table):,}")
-        print(f"   - 总计: {existing_samples + len(new_table):,}")
-        
-        # 确保 schema 一致
+    text_sentences_list = [d['text_sentences'] for d in all_data]
+    all_embeddings = [d['text_sentences_sonar_emb'] for d in all_data]
+    text_sentences_sonar_emb_pa = nested_numpy_to_pyarrow(all_embeddings)
+    
+    new_table = pa.table({
+        'text_sentences': text_sentences_list,
+        'text_sentences_sonar_emb': text_sentences_sonar_emb_pa,
+        'url': [d['url'] for d in all_data],
+        'timestamp': [d['timestamp'] for d in all_data],
+        'split': [d.get('split', 'train') for d in all_data],
+    })
+    
+    # 合并已存在的旧数据（仅非检查点模式）
+    if existing_data is not None:
+        print(f"\n🔄 合并新旧数据（{existing_samples:,} + {len(new_table):,} = {existing_samples + len(new_table):,}）...")
         if existing_data.schema != new_table.schema:
-            print("   ⚠️  Schema 不一致，尝试对齐...")
-            # 对齐列的顺序和类型
             existing_data = existing_data.select(new_table.column_names)
-        
-        # 合并两个 table
-        final_table = pa.concat_tables([existing_data, new_table])
-        print(f"   ✅ 合并完成，总计 {len(final_table):,} 个样本")
-    else:
-        # 如果使用检查点，new_table 已经包含了所有数据（从检查点合并）
-        # 如果不存在旧数据，直接使用 new_table
-        final_table = new_table
-        if use_checkpoints:
-            print(f"   ✅ 检查点数据已合并，总计 {len(final_table):,} 个样本")
+        new_table = pa.concat_tables([existing_data, new_table])
     
-    # 🔍 Validate PyArrow table schema
-    print(f"\n🔍 [Validation] PyArrow Table Schema:")
-    print(f"   - Table column count: {len(final_table.column_names)}")
-    print(f"   - Table row count: {len(final_table)}")
-    for col_name in final_table.column_names:
-        col_type = final_table[col_name].type
-        print(f"   - {col_name}: {col_type}")
-        if col_name == 'text_sentences_sonar_emb':
-            print(f"     - is list type: {pa.types.is_list(col_type)}")
-            if pa.types.is_list(col_type):
-                print(f"     - value type: {col_type.value_type}")
-                if pa.types.is_list(col_type.value_type):
-                    print(f"     - nested value type: {col_type.value_type.value_type}")
-    
-    # 保存合并后的数据
-    pq.write_table(final_table, output_path / "data.parquet")
-    
-    # 更新并保存 metadata
+    pq.write_table(new_table, output_path / "data.parquet")
     save_metadata()
     
-    # 🔍 Validate saved file
+    # 轻量验证（避免 list index overflow）
     print(f"\n🔍 [Validation] Saved file validation:")
-    saved_table = pq.read_table(output_path / "data.parquet")
-    print(f"   - Read table column count: {len(saved_table.column_names)}")
-    print(f"   - Read table row count: {len(saved_table)}")
-    if 'text_sentences_sonar_emb' in saved_table.column_names:
-        first_row_emb = saved_table['text_sentences_sonar_emb'][0]
-        print(f"   - First row text_sentences_sonar_emb type: {type(first_row_emb)}")
-        print(f"   - First row text_sentences_sonar_emb value type: {type(first_row_emb.as_py()) if hasattr(first_row_emb, 'as_py') else 'N/A'}")
-        if hasattr(first_row_emb, 'as_py'):
-            py_value = first_row_emb.as_py()
-            print(f"   - Type after as_py(): {type(py_value)}")
-            if isinstance(py_value, list) and len(py_value) > 0:
-                print(f"   - as_py()[0] type: {type(py_value[0])}")
+    try:
+        pf = pq.ParquetFile(output_path / "data.parquet")
+        print(f"   - Row count: {pf.metadata.num_rows:,}")
+        print(f"   - Columns:   {pf.schema_arrow.names}")
+        first_batch = pf.read_row_group(0)
+        if 'text_sentences_sonar_emb' in first_batch.column_names:
+            emb_type = first_batch.schema.field('text_sentences_sonar_emb').type
+            print(f"   - text_sentences_sonar_emb type: {emb_type}")
+    except Exception as e:
+        print(f"   ⚠️  Validation read failed: {e} (file was still saved successfully)")
     
     print("\n" + "=" * 80)
-    print("✅ 处理完成！")
+    print("✅ 处理完成！（单文件模式）")
     print("=" * 80)
     print(f"📁 输出文件: {output_path}/data.parquet")
     print(f"📊 处理样本: {processed}")
-    print(f"💾 文件大小: {(output_path / 'data.parquet').stat().st_size / 1024 / 1024:.2f} MB")
+    file_size_mb = (output_path / 'data.parquet').stat().st_size / 1024 / 1024
+    print(f"💾 文件大小: {file_size_mb:.2f} MB")
     print("\n📝 提示:")
     print("   多卡运行时，datacard 将在所有任务完成后统一更新")
     print("   如需手动更新，请运行:")

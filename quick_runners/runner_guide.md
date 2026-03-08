@@ -31,7 +31,6 @@ sbatch --gres=gpu:1 --mem=128G sbatch_runners/sbatch_bash_runner.sh ./quick_runn
 ```
 
 ---
-
 ## 0. 环境变量（推荐设置）
 
 ```bash
@@ -51,13 +50,11 @@ export TMPDIR=/work/hdd/bfaq/jlyu3/lcm/tmp
 
 **用户必填环境变量**：
 
-
 | 变量            | 说明                                  |
 | ------------- | ----------------------------------- |
 | `OUTPUT_DIR`  | 输出目录（target_path）                   |
 | `START_INDEX` | 起始样本索引                              |
 | `NUM_SAMPLES` | 每 rank 处理样本数（总样本 ≈ 8 × NUM_SAMPLES） |
-
 
 ### 1a. bash 直接运行（8 卡）
 
@@ -80,7 +77,7 @@ export HF_TOKEN=xxx
 export OUTPUT_DIR=/work/hdd/bfaq/jlyu3/lcm/preprocessed_data
 export START_INDEX=0
 export NUM_SAMPLES=1000000
-sbatch sbatch_runners/sbatch_bash_runner.sh ./quick_runners/preprocess/prep_fineweb_streaming_multigpu.sh
+sbatch sbatch_runners/sbatch_bash_runner.sh ./quick_runners/preprocess/prep_fineweb_streaming_multigpu.sh --batch_size=64 --sonar_batch_size=128
 ```
 
 ### 1c. 输出与衔接
