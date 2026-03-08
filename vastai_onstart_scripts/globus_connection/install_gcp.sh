@@ -96,14 +96,15 @@ mkdir -p "$ACCESSIBLE_DIR"
 chmod 755 "$ACCESSIBLE_DIR" 2>/dev/null || true
 
 # Stop any existing instance, then start as globus user
-runuser -u "$GCP_USER" -- "$GCP_BIN" -stop 2>/dev/null || true
+# 显式设置 HOME，避免继承 VastAI 环境的 HOME（如 /u/jlyu3）导致 GCP 找错配置目录
+runuser -u "$GCP_USER" -- env HOME="$GCP_USER_HOME" "$GCP_BIN" -stop 2>/dev/null || true
 sleep 2
 echo "[Globus] Starting GCP as user $GCP_USER..."
-runuser -u "$GCP_USER" -- "$GCP_BIN" -start &
+runuser -u "$GCP_USER" -- env HOME="$GCP_USER_HOME" "$GCP_BIN" -start &
 sleep 5
 
 # Verify it's running
-if runuser -u "$GCP_USER" -- "$GCP_BIN" -status 2>/dev/null | grep -q "connected"; then
+if runuser -u "$GCP_USER" -- env HOME="$GCP_USER_HOME" "$GCP_BIN" -status 2>/dev/null | grep -q "connected"; then
     echo "[Globus] GCP installed and running"
 else
     echo "[Globus] GCP started but may not be connected yet (check -status)"
