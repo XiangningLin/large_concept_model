@@ -249,14 +249,21 @@ if [ -d "${OUTPUT_DIR}" ]; then
 fi
 
 # ========== Part 6: 数据推送到 Delta（可选）==========
-if [ -n "${DELTA_SSH_KEY}" ] && [ -n "${DELTA_DEST}" ]; then
+# 支持 DELTA_SSH_KEY（单变量）或 DELTA_SSH_KEY_B64_1/2/3（多段 Base64，VastAI 256 字符限制）
+if [ -n "${DELTA_DEST}" ]; then
+    if [ -n "${DELTA_SSH_KEY}" ]; then
+        echo "${DELTA_SSH_KEY}" > /tmp/delta_key
+    elif [ -n "${DELTA_SSH_KEY_B64_1}" ]; then
+        echo "${DELTA_SSH_KEY_B64_1}${DELTA_SSH_KEY_B64_2}${DELTA_SSH_KEY_B64_3}" | base64 -d > /tmp/delta_key
+    fi
+fi
+
+if [ -f /tmp/delta_key ] && [ -n "${DELTA_DEST}" ]; then
+    chmod 600 /tmp/delta_key
     echo "======================================"
     echo "推送checkpoints到 Delta"
     echo "======================================"
     echo "目标: ${DELTA_USER}@${DELTA_HOST}:${DELTA_DEST}"
-
-    # 写入SSH私钥
-    echo "${DELTA_SSH_KEY}" > /tmp/delta_key && chmod 600 /tmp/delta_key
 
     # 使用rsync传输checkpoints（仅传输milestones以节省时间和空间）
     if [ -d "${OUTPUT_DIR}/milestones" ]; then
@@ -282,7 +289,7 @@ if [ -n "${DELTA_SSH_KEY}" ] && [ -n "${DELTA_DEST}" ]; then
     echo "✓ Checkpoint传输完成！"
 else
     echo "======================================"
-    echo "跳过Delta传输（未配置DELTA_SSH_KEY或DELTA_DEST）"
+    echo "跳过Delta传输（未配置DELTA_SSH_KEY/DELTA_SSH_KEY_B64_*或DELTA_DEST）"
     echo "======================================"
 fi
 
