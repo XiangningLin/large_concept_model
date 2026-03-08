@@ -99,17 +99,32 @@ chown -R "$GCP_USER:$GCP_USER" "$GCP_USER_HOME/.globusonline"
 mkdir -p "$ACCESSIBLE_DIR"
 chmod 755 "$ACCESSIBLE_DIR" 2>/dev/null || true
 
+# ========== DEBUG: 定位 HOME 错误根源 ==========
+echo "[Globus DEBUG] === 关键变量 ==="
+echo "[Globus DEBUG] GCP_USER_HOME=$GCP_USER_HOME"
+echo "[Globus DEBUG] globus passwd: $(getent passwd "$GCP_USER" 2>/dev/null || echo 'N/A')"
+echo "[Globus DEBUG] globus 的 HOME(来自passwd): $(getent passwd "$GCP_USER" 2>/dev/null | cut -d: -f6 || echo 'N/A')"
+echo "[Globus DEBUG] GCP_BIN=$GCP_BIN"
+echo "[Globus DEBUG] GCP 文件类型: $(file "$GCP_BIN" 2>/dev/null || echo 'N/A')"
+echo "[Globus DEBUG] GCP 前5行:"
+head -5 "$GCP_BIN" 2>/dev/null || true
+echo "[Globus DEBUG] 测试 runuser 下 Python 看到的 HOME:"
+runuser -u "$GCP_USER" -- /bin/bash -c "export HOME='$GCP_USER_HOME'; python3 -c \"import os; print('[Globus DEBUG]   env HOME:', repr(os.environ.get('HOME'))); print('[Globus DEBUG]   expanduser ~:', repr(os.path.expanduser('~')))\"" 2>/dev/null || echo "[Globus DEBUG]   (python3 测试失败)"
+echo "[Globus DEBUG] 当前脚本的 HOME(调用者): $HOME"
+echo "[Globus DEBUG] ========================"
+
 # Stop any existing instance, then start as globus user
-# 用 bash -c "export HOME=...; exec ..." 确保 GCP 及其子进程（gc.py）都继承正确的 HOME
-# 否则 GCP 会错误使用 /u/jlyu3 等路径
-runuser -u "$GCP_USER" -- /bin/bash -c "export HOME='$GCP_USER_HOME'; exec '$GCP_BIN' -stop" 2>/dev/null || true
+# 使用 -dir 显式指定配置目录，绕过 HOME/env 问题（GCP 官方支持）
+GCP_CONFIG_DIR="$GCP_USER_HOME/.globusonline"
+echo "[Globus DEBUG] 使用 -dir $GCP_CONFIG_DIR 启动 GCP"
+runuser -u "$GCP_USER" -- "$GCP_BIN" -dir "$GCP_CONFIG_DIR" -stop 2>/dev/null || true
 sleep 2
-echo "[Globus] Starting GCP as user $GCP_USER (HOME=$GCP_USER_HOME)..."
-runuser -u "$GCP_USER" -- /bin/bash -c "export HOME='$GCP_USER_HOME'; exec '$GCP_BIN' -start" &
+echo "[Globus] Starting GCP as user $GCP_USER (-dir=$GCP_CONFIG_DIR)..."
+runuser -u "$GCP_USER" -- "$GCP_BIN" -dir "$GCP_CONFIG_DIR" -start &
 sleep 5
 
 # Verify it's running
-if runuser -u "$GCP_USER" -- /bin/bash -c "export HOME='$GCP_USER_HOME'; '$GCP_BIN' -status" 2>/dev/null | grep -q "connected"; then
+if runuser -u "$GCP_USER" -- "$GCP_BIN" -dir "$GCP_CONFIG_DIR" -status 2>/dev/null | grep -q "connected"; then
     echo "[Globus] GCP installed and running"
 else
     echo "[Globus] WARNING: GCP may have failed to start (check logs above)"
