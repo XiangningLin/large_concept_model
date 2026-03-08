@@ -37,9 +37,18 @@ if not CLIENT_ID:
     print("  client_id 来自 developers.globus.org 创建的 Native App")
     sys.exit(1)
 
+# NCSA Delta 等 mapped collection 需要 data_access scope，否则 transfer 会报 ConsentRequired
+# 可通过环境变量 GLOBUS_DEST_ENDPOINT 覆盖
+import os
+DEST_ENDPOINT = os.environ.get("GLOBUS_DEST_ENDPOINT", "2d66a243-4a3f-4578-9d7f-1935fb5fba8f")
+DATA_ACCESS_SCOPE = f"https://auth.globus.org/scopes/{DEST_ENDPOINT}/data_access"
+
 client = globus_sdk.NativeAppAuthClient(CLIENT_ID)
 client.oauth2_start_flow(
-    requested_scopes=["urn:globus:auth:scope:transfer.api.globus.org:all"],
+    requested_scopes=[
+        "urn:globus:auth:scope:transfer.api.globus.org:all",
+        DATA_ACCESS_SCOPE,
+    ],
     refresh_tokens=True,
 )
 

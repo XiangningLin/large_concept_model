@@ -68,6 +68,10 @@
 
 若本地 prepare 时 home 为 `/u/xxx` 等，而 VastAI 上使用 `/home/globus`，install_gcp.sh 会自动将配置中的 `/u/xxx` 替换为 `/home/globus`。若原路径不同，可设置 `GLOBUS_CREDS_OLD_HOME`（如 `/home/jlyu3`）。
 
+## ConsentRequired 错误
+
+若 transfer 报 `ConsentRequired: You must grant consent for the destination endpoint`，说明当前 refresh token 未包含 NCSA Delta 的 data_access 授权。需**重新运行** `get_refresh_token.py` 获取新 token（脚本已包含 Delta data_access scope），并将新 token 更新到 VastAI 环境变量。
+
 ## 安全
 
 - 不要将 `GLOBUS_REFRESH_TOKEN`、`GLOBUS_CREDS_B64` 等写入代码或公开仓库

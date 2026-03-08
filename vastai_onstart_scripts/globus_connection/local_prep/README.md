@@ -21,6 +21,8 @@ python get_refresh_token.py <你的client_id>
 - 将授权页显示的 code 粘贴回终端
 - 复制输出的 **refresh_token**，存入 VastAI 环境变量 `GLOBUS_REFRESH_TOKEN`
 
+**注意**：脚本已包含 NCSA Delta 的 data_access scope；若 transfer 报 ConsentRequired，需重新运行本步骤获取新 token。
+
 **注意**：若后续 transfer 报错需 client_secret，则改用 Confidential App，并同时保存 `GLOBUS_CLIENT_SECRET`。
 
 ```bash
