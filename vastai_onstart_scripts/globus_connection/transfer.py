@@ -110,9 +110,30 @@ def main() -> int:
         return 0
 
     except globus_sdk.TransferAPIError as e:
-        if e.info and getattr(e.info, "consent_required", None):
+        is_consent = (
+            (e.info and getattr(e.info, "consent_required", None))
+            or (getattr(e, "code", None) == "ConsentRequired")
+            or "ConsentRequired" in str(e)
+        )
+        if is_consent:
             print("[Globus] ConsentRequired: You must grant consent for the destination endpoint.", file=sys.stderr)
-            print("  Login at app.globus.org and consent to the endpoint, then retry.", file=sys.stderr)
+            # 生成授权 URL，用户访问后授予 consent，然后重试（无需更新 refresh token）
+            data_access_scope = f"https://auth.globus.org/scopes/{cfg.dest_endpoint}/data_access"
+            auth_client = globus_sdk.NativeAppAuthClient(cfg.client_id)
+            auth_client.oauth2_start_flow(
+                requested_scopes=[
+                    "urn:globus:auth:scope:transfer.api.globus.org:all",
+                    data_access_scope,
+                ],
+                redirect_uri="https://auth.globus.org/v2/web/auth-code",
+                refresh_tokens=True,
+            )
+            consent_url = auth_client.oauth2_get_authorize_url()
+            print("", file=sys.stderr)
+            print("  解决：重新运行 get_refresh_token.py（已包含 Delta data_access scope），", file=sys.stderr)
+            print("  用浏览器打开其打印的 URL 完成授权，将新的 refresh_token 更新到 VastAI 后重试。", file=sys.stderr)
+            print("", file=sys.stderr)
+            print(f"  授权 URL（备用）: {consent_url}", file=sys.stderr)
         else:
             print(f"[Globus] TransferAPIError: {e}", file=sys.stderr)
         return 1
