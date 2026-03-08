@@ -214,7 +214,9 @@ if [ -n "${GLOBUS_REFRESH_TOKEN}" ] && [ -n "${GLOBUS_CLIENT_ID}" ] && [ -n "${G
     echo "======================================"
     uv pip install --python .venv/bin/python -q globus-sdk 2>/dev/null || .venv/bin/pip install -q globus-sdk 2>/dev/null || true
     export GLOBUS_SOURCE_PATH="${OUTPUT_DIR}"
-    .venv/bin/python "${GLOBUS_DIR}/transfer.py" || echo "⚠️ Globus 传输提交失败"
+    # GCP 以 globus 用户运行，凭证在 /home/globus/.globusonline；设置 HOME 以便 transfer.py 找到 endpoint
+    chmod -R a+rX "${OUTPUT_DIR}" 2>/dev/null || true
+    HOME=/home/globus .venv/bin/python "${GLOBUS_DIR}/transfer.py" || echo "⚠️ Globus 传输提交失败"
 fi
 
 # ========== Part 7: 原 Delta SSH 推送（已弃用，保留注释）==========

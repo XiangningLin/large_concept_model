@@ -6,7 +6,7 @@
 
 ## 功能
 
-1. **install_gcp.sh**：还原预打包凭证、启动 GCP
+1. **install_gcp.sh**：还原预打包凭证、以非 root 用户（globus）启动 GCP（GCP 不支持 root 运行）
 2. **transfer.py**：使用 Globus Transfer API 将数据传到 Delta
 3. **local_prep/**：本地准备脚本（获取 refresh token、打包 GCP 凭证）
 
