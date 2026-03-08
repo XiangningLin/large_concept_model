@@ -30,7 +30,7 @@ class GlobusConfig:
 
     # Transfer target
     source_endpoint: Optional[str] = None
-    dest_endpoint: str = "82f1b5c6-6e9b-11e9-bf45-0e4a062367b1"  # NCSA Delta
+    dest_endpoint: str = "2d66a243-4a3f-4578-9d7f-1935fb5fba8f"  # NCSA Delta（2025 年有效）
     dest_path: str = "/work/hdd/bfaq/jlyu3/lcm/preprocessed_data"
     transfer_label: str = "VastAI-to-Delta"
     wait_for_completion: bool = False
@@ -49,7 +49,7 @@ class GlobusConfig:
             client_id=os.environ.get("GLOBUS_CLIENT_ID") or None,
             client_secret=os.environ.get("GLOBUS_CLIENT_SECRET") or None,
             source_endpoint=os.environ.get("GLOBUS_SOURCE_ENDPOINT") or None,
-            dest_endpoint=os.environ.get("GLOBUS_DEST_ENDPOINT", "82f1b5c6-6e9b-11e9-bf45-0e4a062367b1"),
+            dest_endpoint=os.environ.get("GLOBUS_DEST_ENDPOINT", "2d66a243-4a3f-4578-9d7f-1935fb5fba8f"),
             dest_path=os.environ.get("GLOBUS_DEST_PATH", "/work/hdd/bfaq/jlyu3/lcm/preprocessed_data"),
             transfer_label=os.environ.get("GLOBUS_TRANSFER_LABEL", "VastAI-to-Delta"),
             wait_for_completion=os.environ.get("GLOBUS_WAIT_FOR_COMPLETION", "").lower() in ("1", "true", "yes"),

@@ -75,7 +75,7 @@
 
 ## Delta Endpoint
 
-NCSA Delta 的 Globus endpoint UUID 可在 [Globus Endpoint Search](https://app.globus.org/endpoints) 或 NCSA 文档中查询。默认使用 `82f1b5c6-6e9b-11e9-bf45-0e4a062367b1`，如有变更请设置 `GLOBUS_DEST_ENDPOINT`。
+NCSA Delta 的 Globus endpoint UUID 可在 [Globus Endpoint Search](https://app.globus.org/endpoints) 或 NCSA 文档中查询。默认使用 `2d66a243-4a3f-4578-9d7f-1935fb5fba8f`，如有变更请设置 `GLOBUS_DEST_ENDPOINT`。
 
 ## 兼容性
 
