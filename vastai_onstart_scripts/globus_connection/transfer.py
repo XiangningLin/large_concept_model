@@ -78,8 +78,8 @@ def main() -> int:
         )
         tc = globus_sdk.TransferClient(authorizer=authorizer)
 
+        # globus-sdk v4: TransferData(source, dest) 不再接受 tc 作为第一参数
         task_data = globus_sdk.TransferData(
-            tc,
             source_ep,
             cfg.dest_endpoint,
             label=cfg.transfer_label,
