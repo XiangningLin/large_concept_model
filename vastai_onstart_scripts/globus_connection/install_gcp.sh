@@ -22,18 +22,22 @@ echo "[Globus] Restoring GCP credentials and starting"
 echo "======================================"
 
 # Create non-root user (GCP refuses to run as root)
+# 显式指定 -d /home/globus，避免 VastAI 环境给新用户分配 /u/xxx 等错误 home
 if ! id -u "$GCP_USER" &>/dev/null; then
     echo "[Globus] Creating user $GCP_USER..."
-    useradd -m -s /bin/bash "$GCP_USER" 2>/dev/null || {
+    useradd -m -d /home/globus -s /bin/bash "$GCP_USER" 2>/dev/null || {
         echo "[Globus] WARNING: Could not create user $GCP_USER (useradd failed). GCP may not start."
     }
 fi
-
-GCP_USER_HOME=$(getent passwd "$GCP_USER" 2>/dev/null | cut -d: -f6)
-if [ -z "$GCP_USER_HOME" ] || [ ! -d "$GCP_USER_HOME" ]; then
-    echo "[Globus] ERROR: User $GCP_USER has no home directory"
+# 强制使用 /home/globus（VastAI 上 /u/jlyu3 可能不存在或不可写）
+GCP_USER_HOME="/home/globus"
+mkdir -p "$GCP_USER_HOME"
+chown "$GCP_USER:$GCP_USER" "$GCP_USER_HOME" 2>/dev/null || true
+if [ ! -d "$GCP_USER_HOME" ]; then
+    echo "[Globus] ERROR: Cannot use $GCP_USER_HOME"
     exit 1
 fi
+echo "[Globus] Using GCP home: $GCP_USER_HOME"
 
 # Restore ~/.globusonline to globus user's home (not root's)
 echo "$CREDS" | base64 -d | tar xz -C "$GCP_USER_HOME"
@@ -96,18 +100,19 @@ mkdir -p "$ACCESSIBLE_DIR"
 chmod 755 "$ACCESSIBLE_DIR" 2>/dev/null || true
 
 # Stop any existing instance, then start as globus user
-# 显式设置 HOME，避免继承 VastAI 环境的 HOME（如 /u/jlyu3）导致 GCP 找错配置目录
-runuser -u "$GCP_USER" -- env HOME="$GCP_USER_HOME" "$GCP_BIN" -stop 2>/dev/null || true
+# 用 bash -c "export HOME=...; exec ..." 确保 GCP 及其子进程（gc.py）都继承正确的 HOME
+# 否则 GCP 会错误使用 /u/jlyu3 等路径
+runuser -u "$GCP_USER" -- /bin/bash -c "export HOME='$GCP_USER_HOME'; exec '$GCP_BIN' -stop" 2>/dev/null || true
 sleep 2
-echo "[Globus] Starting GCP as user $GCP_USER..."
-runuser -u "$GCP_USER" -- env HOME="$GCP_USER_HOME" "$GCP_BIN" -start &
+echo "[Globus] Starting GCP as user $GCP_USER (HOME=$GCP_USER_HOME)..."
+runuser -u "$GCP_USER" -- /bin/bash -c "export HOME='$GCP_USER_HOME'; exec '$GCP_BIN' -start" &
 sleep 5
 
 # Verify it's running
-if runuser -u "$GCP_USER" -- env HOME="$GCP_USER_HOME" "$GCP_BIN" -status 2>/dev/null | grep -q "connected"; then
+if runuser -u "$GCP_USER" -- /bin/bash -c "export HOME='$GCP_USER_HOME'; '$GCP_BIN' -status" 2>/dev/null | grep -q "connected"; then
     echo "[Globus] GCP installed and running"
 else
-    echo "[Globus] GCP started but may not be connected yet (check -status)"
+    echo "[Globus] WARNING: GCP may have failed to start (check logs above)"
 fi
 
 echo "======================================"
