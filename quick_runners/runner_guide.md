@@ -173,6 +173,50 @@ sbatch sbatch_runners/sbatch_bash_runner.sh ./quick_runners/train/pretrain.sh
 > **替换 RECIPE**：`RECIPE=mse_60M ./quick_runners/train/pretrain.sh` 或 `RECIPE=mse`（1.6B）。
 > **使用 packed 数据**：追加 `'++trainer.training_data.0.name="fine_web_edu_packed=train"' ++trainer.training_data.0.source_suffix_text=null '++trainer.validation_data.0.name="fine_web_edu_packed=validation"' ++trainer.validation_data.0.source_suffix_text=null`。
 
+### 预训练 CLI 配置自由度参考
+
+完整 `torchrun -m lcm.train` 命令，可按需覆盖任意参数。以下为 1 卡快速测试示例（packed 数据、小 batch、短步数、禁用 FSDP）：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run torchrun --standalone --nnodes=1 --nproc-per-node=1 -m lcm.train \
+  launcher=standalone \
+  +pretrain=mse_60M \
+  ++trainer.output_dir=checkpoints/test_packed \
+  ++trainer.experiment_name=test_packed \
+  ++trainer.data_loading_config.batch_size=4 \
+  ++trainer.max_steps=5 \
+  '++trainer.checkpoint_milestones=[1000,2500]' \
+  ++trainer.checkpoint_every_n_steps=999999 \
+  ++trainer.save_model_every_n_steps=999999 \
+  ++trainer.publish_metrics_every_n_steps=1 \
+  ++trainer.validate_every_n_steps=5 \
+  ++trainer.use_fsdp=false \
+  '++trainer.training_data.0.name="fine_web_edu_packed=train"' \
+  ++trainer.training_data.0.source_suffix_text=null \
+  '++trainer.validation_data.0.name="fine_web_edu_packed=validation"' \
+  ++trainer.validation_data.0.source_suffix_text=null
+```
+
+**常用可调参数**：
+
+| 参数 | 说明 | 示例 |
+|------|------|------|
+| `+pretrain` | recipe（mse_60M / mse_370M / mse 等） | `+pretrain=mse_60M` |
+| `++trainer.output_dir` | checkpoint 输出目录 | `checkpoints/test_packed` |
+| `++trainer.experiment_name` | 实验名 | `test_packed` |
+| `++trainer.data_loading_config.batch_size` | 每 GPU batch size | `4` |
+| `++trainer.max_steps` | 最大训练步数 | `5` |
+| `++trainer.checkpoint_milestones` | token 数 milestone 列表 | `[1000,2500]` |
+| `++trainer.checkpoint_every_n_steps` | 每 N 步保存 checkpoint | `999999`（禁用） |
+| `++trainer.save_model_every_n_steps` | 每 N 步保存模型 | `999999`（禁用） |
+| `++trainer.publish_metrics_every_n_steps` | 每 N 步发布 metrics | `1` |
+| `++trainer.validate_every_n_steps` | 每 N 步验证 | `5` |
+| `++trainer.use_fsdp` | 是否用 FSDP | `false` |
+| `++trainer.training_data.0.name` | 训练数据源 | `"fine_web_edu_packed=train"` |
+| `++trainer.validation_data.0.name` | 验证数据源 | `"fine_web_edu_packed=validation"` |
+
+多卡时：`--nproc-per-node=8`，并设置 `CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7`。
+
 ### 4.5. 预训练中断恢复
 
 ```bash

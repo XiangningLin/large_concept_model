@@ -38,6 +38,9 @@ export GIT_TERMINAL_PROMPT=0
 export MKL_THREADING_LAYER=GNU
 export NCCL_TIMEOUT=1800
 
+# 任务完成后自动关闭实例（默认 true；设 VASTAI_AUTO_SHUTDOWN=false 可禁用）
+export VASTAI_AUTO_SHUTDOWN="${VASTAI_AUTO_SHUTDOWN:-true}"
+
 # Delta传输配置（可选）
 export DELTA_SSH_KEY="${DELTA_SSH_KEY:-}"
 export DELTA_USER="${DELTA_USER:-jlyu3}"
@@ -175,7 +178,12 @@ if [ -d "${OUTPUT_DIR}" ] && [ "$(find ${OUTPUT_DIR} -name "checkpoint_*" -o -na
     echo "现有checkpoints："
     find ${OUTPUT_DIR} -name "checkpoint_*" -o -name "milestone_*" 2>/dev/null | head -5
     echo ""
-    read -p "是否继续并可能覆盖现有checkpoints？(yes/no): " continue_train
+    if [ -t 0 ]; then
+        read -p "是否继续并可能覆盖现有checkpoints？(yes/no): " continue_train
+    else
+        continue_train="${PRETRAIN_OVERWRITE:-yes}"
+        echo "非交互模式，使用 PRETRAIN_OVERWRITE=${continue_train}"
+    fi
     if [ "$continue_train" != "yes" ]; then
         echo "训练已取消"
         exit 0
@@ -302,3 +310,24 @@ echo "  1. 运行 decay.sh 进行decay阶段训练"
 echo "  2. 使用milestone checkpoints进行评估"
 echo "  3. 继续在VastAI或Delta上训练更大的模型"
 echo "======================================"
+
+# ========== Part 7: 任务完成后自动关闭实例（可选）==========
+# 设置 VASTAI_AUTO_SHUTDOWN=false 可禁用
+if [ "${VASTAI_AUTO_SHUTDOWN:-true}" = "true" ] && [ -n "${CONTAINER_ID}" ] && [ -n "${CONTAINER_API_KEY}" ]; then
+    echo "======================================"
+    echo "自动关闭 VastAI 实例 (ID: ${CONTAINER_ID})"
+    echo "======================================"
+    resp=$(curl -s -w "\n%{http_code}" -X DELETE \
+        "https://console.vast.ai/api/v0/instances/${CONTAINER_ID}/" \
+        -H "Authorization: Bearer ${CONTAINER_API_KEY}" 2>/dev/null || true)
+    http_code=$(echo "$resp" | tail -n1)
+    if [ "$http_code" = "200" ]; then
+        echo "✓ 实例已关闭"
+    else
+        echo "⚠️ 关闭实例失败 (HTTP $http_code)，请手动执行: vastai destroy instance ${CONTAINER_ID}"
+    fi
+else
+    [ "${VASTAI_AUTO_SHUTDOWN:-true}" != "true" ] && echo "[Part7] 跳过自动关闭 (VASTAI_AUTO_SHUTDOWN=false)"
+    [ -z "${CONTAINER_ID}" ] && echo "[Part7] 跳过自动关闭 (CONTAINER_ID 未设置)"
+    [ -z "${CONTAINER_API_KEY}" ] && echo "[Part7] 跳过自动关闭 (CONTAINER_API_KEY 未设置)"
+fi

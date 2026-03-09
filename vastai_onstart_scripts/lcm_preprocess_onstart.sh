@@ -40,6 +40,9 @@ export DEBIAN_FRONTEND=noninteractive
 export GIT_TERMINAL_PROMPT=0
 export MKL_THREADING_LAYER=GNU
 
+# 任务完成后自动关闭实例（默认 true；设 VASTAI_AUTO_SHUTDOWN=false 可禁用）
+export VASTAI_AUTO_SHUTDOWN="${VASTAI_AUTO_SHUTDOWN:-true}"
+
 # Delta传输配置（可选）
 export DELTA_SSH_KEY="${DELTA_SSH_KEY:-}"
 export DELTA_USER="${DELTA_USER:-jlyu3}"
@@ -266,3 +269,24 @@ echo "下一步可以："
 echo "  1. 在Delta上使用这些数据进行训练"
 echo "  2. 或者在VastAI上继续运行 lcm_pretrain_onstart.sh"
 echo "======================================"
+
+# ========== Part 8: 任务完成后自动关闭实例（可选）==========
+# 设置 VASTAI_AUTO_SHUTDOWN=false 可禁用
+if [ "${VASTAI_AUTO_SHUTDOWN:-true}" = "true" ] && [ -n "${CONTAINER_ID}" ] && [ -n "${CONTAINER_API_KEY}" ]; then
+    echo "======================================"
+    echo "自动关闭 VastAI 实例 (ID: ${CONTAINER_ID})"
+    echo "======================================"
+    resp=$(curl -s -w "\n%{http_code}" -X DELETE \
+        "https://console.vast.ai/api/v0/instances/${CONTAINER_ID}/" \
+        -H "Authorization: Bearer ${CONTAINER_API_KEY}" 2>/dev/null || true)
+    http_code=$(echo "$resp" | tail -n1)
+    if [ "$http_code" = "200" ]; then
+        echo "✓ 实例已关闭"
+    else
+        echo "⚠️ 关闭实例失败 (HTTP $http_code)，请手动执行: vastai destroy instance ${CONTAINER_ID}"
+    fi
+else
+    [ "${VASTAI_AUTO_SHUTDOWN:-true}" != "true" ] && echo "[Part8] 跳过自动关闭 (VASTAI_AUTO_SHUTDOWN=false)"
+    [ -z "${CONTAINER_ID}" ] && echo "[Part8] 跳过自动关闭 (CONTAINER_ID 未设置)"
+    [ -z "${CONTAINER_API_KEY}" ] && echo "[Part8] 跳过自动关闭 (CONTAINER_API_KEY 未设置)"
+fi
